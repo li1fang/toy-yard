@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toyyard"
+version = "0.2.0"
+description = "Canonical warehouse + packet exchange hub for asset intake, lineage, evidence, and downstream consumer views."
+readme = "README.md"
+requires-python = ">=3.14"
+authors = [{ name = "Codex" }]
+
+[project.scripts]
+toyyard = "toyyard.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

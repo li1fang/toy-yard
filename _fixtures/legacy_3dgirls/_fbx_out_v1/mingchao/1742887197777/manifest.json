@@ -1,0 +1,12 @@
+{
+  "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+  "output_fbx": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/Cantarella.fbx",
+  "split_outputs": {
+    "body": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/Cantarella_body.fbx",
+    "weapon": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/Cantarella_weapon.fbx"
+  },
+  "textures": [
+    "C:/legacy/textures/Cantarella_albedo.png"
+  ],
+  "warnings": []
+}

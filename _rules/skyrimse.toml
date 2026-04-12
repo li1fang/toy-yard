@@ -1,0 +1,7 @@
+[signals]
+game_extensions = [".nif", ".dds", ".esp", ".esm", ".hkx"]
+bodyslide_markers = ["calientetools/bodyslide"]
+body_keywords = ["3ba", "cbbe", "bhunp", "unp", "uunp"]
+skeleton_keywords = ["xpmsse"]
+physics_keywords = ["smp", "fsmp", "hdt"]
+plugin_extensions = [".esp", ".esm", ".esl"]

@@ -1,0 +1,25 @@
+{
+  "generated_at_utc": "2026-04-10T10:00:00Z",
+  "reports": [
+    {
+      "sample_id": "mingchao_1742887197777_597530c2",
+      "package_id": "mingchao_1742887197777_597530c2_character_f91ab5d6",
+      "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+      "source_relative_path": "mingchao/Cantarella.pmx",
+      "report_path": "_preflight_out/mingchao/1742887197777/preflight_report.json",
+      "risk_level": "medium",
+      "package_role": "character_bundle_member",
+      "warning_count": 1
+    },
+    {
+      "sample_id": "mingchao_1742887197777_597530c2",
+      "package_id": "mingchao_1742887197777_597530c2_weapon_a1b2c3d4",
+      "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+      "source_relative_path": "mingchao/Cantarella.pmx",
+      "report_path": "_preflight_out/mingchao/1742887197777/preflight_report.json",
+      "risk_level": "medium",
+      "package_role": "weapon_like",
+      "warning_count": 0
+    }
+  ]
+}

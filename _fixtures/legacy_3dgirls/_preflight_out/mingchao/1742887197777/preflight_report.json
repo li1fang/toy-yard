@@ -1,0 +1,21 @@
+{
+  "sample_id": "mingchao_1742887197777_597530c2",
+  "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+  "source_relative_path": "mingchao/Cantarella.pmx",
+  "source_format": "pmx",
+  "catalog_context": {
+    "display_name": "坎特蕾拉"
+  },
+  "model": {
+    "name": "Cantarella"
+  },
+  "risk": {
+    "level": "medium",
+    "can_convert": true
+  },
+  "counts": {
+    "textures": 5,
+    "materials": 3
+  },
+  "suggested_profile": "pmx_default"
+}

@@ -1,0 +1,8 @@
+{
+  "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+  "output_fbx": "C:/legacy/_fbx_out_v1_verify/Cantarella_verified.fbx",
+  "split_outputs": {
+    "body": "C:/legacy/_fbx_out_v1_verify/Cantarella_body_verified.fbx"
+  },
+  "warnings": []
+}

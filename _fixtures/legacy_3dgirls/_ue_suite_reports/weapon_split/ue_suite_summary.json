@@ -1,0 +1,30 @@
+{
+  "generated_at_utc": "2026-04-10T12:00:00Z",
+  "successes": [
+    {
+      "sample_id": "mingchao_1742887197777_597530c2",
+      "package_id": "mingchao_1742887197777_597530c2_character_f91ab5d6",
+      "source_relative_path": "mingchao/Cantarella.pmx",
+      "manifest_path": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/manifest.json",
+      "content_bucket": "character",
+      "package_role": "character_bundle_member",
+      "contract_type": "host_blueprint",
+      "consumer_ready": true,
+      "status": "success",
+      "score": 0.92
+    },
+    {
+      "sample_id": "mingchao_1742887197777_597530c2",
+      "package_id": "mingchao_1742887197777_597530c2_weapon_a1b2c3d4",
+      "source_relative_path": "mingchao/Cantarella.pmx",
+      "manifest_path": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/manifest.json",
+      "content_bucket": "weapon",
+      "package_role": "weapon_like",
+      "contract_type": "weapon_mesh",
+      "consumer_ready": true,
+      "status": "success",
+      "score": 0.88
+    }
+  ],
+  "failures": []
+}

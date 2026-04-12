@@ -1,0 +1,15 @@
+{
+  "source_file": "C:/legacy/mingchao/Cantarella.pmx",
+  "output_fbx": "C:/legacy/_fbx_out_v1/mingchao/1742887197777/Cantarella.fbx",
+  "summary": {
+    "material_count": 3
+  },
+  "materials": [
+    {
+      "name": "Body"
+    },
+    {
+      "name": "Weapon"
+    }
+  ]
+}
