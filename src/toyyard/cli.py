@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from toyyard.aiue_roundtrip import import_aiue_results
 from toyyard.aiue_export import export_aiue_pmx_view
+from toyyard.communication_signal import build_aiue_pmx_export_signal_from_paths, build_motion_catalog_signal
 from toyyard.constants import DEFAULT_ROOT, ROOT_KINDS, SOURCE_KINDS
 from toyyard.db import connect, init_db
 from toyyard.ingest import format_import_rows, import_path, scan_source
@@ -138,6 +140,9 @@ def build_parser() -> argparse.ArgumentParser:
     report_subparsers.add_parser("aiue-ready", help="List canonical packages ready for AiUE consumption")
     report_subparsers.add_parser("lineage-gaps", help="List canonical lineage gaps")
     report_subparsers.add_parser("motion-catalog", help="List motion catalog packages")
+    communication_signal_parser = report_subparsers.add_parser("communication-signal", help="Emit the latest machine-readable communication signal")
+    communication_signal_parser.add_argument("--lane", choices=("pmx", "motion"), default="pmx")
+    communication_signal_parser.add_argument("--profile", default=None)
 
     repair_parser = subparsers.add_parser("repair", help="Repair canonical lineage and imported records")
     repair_subparsers = repair_parser.add_subparsers(dest="repair_command", required=True)
@@ -322,6 +327,7 @@ def cmd_export_aiue_pmx_view(paths: ProjectPaths, args: argparse.Namespace) -> i
                 "export_root": result["export_root"],
                 "summary_path": result["summary_path"],
                 "manifest_artifact_check_path": result["manifest_artifact_check_path"],
+                "communication_signal_path": result["communication_signal_path"],
                 "trial_workspace_path": result["trial_workspace_path"],
             }
         ]
@@ -369,6 +375,21 @@ def cmd_report_motion_catalog(paths: ProjectPaths) -> int:
     conn = _open_db(paths)
     print_rows(motion_catalog_rows(conn))
     conn.close()
+    return 0
+
+
+def cmd_report_communication_signal(paths: ProjectPaths, lane: str, profile: str | None) -> int:
+    if lane == "pmx":
+        if not profile:
+            raise SystemExit("`toyyard report communication-signal --lane pmx` requires --profile.")
+        payload = build_aiue_pmx_export_signal_from_paths(paths, profile)
+        print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
+        return 0
+
+    conn = _open_db(paths)
+    payload = build_motion_catalog_signal(conn)
+    conn.close()
+    print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
     return 0
 
 
@@ -425,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_report_lineage_gaps(paths)
     if args.command == "report" and args.report_command == "motion-catalog":
         return cmd_report_motion_catalog(paths)
+    if args.command == "report" and args.report_command == "communication-signal":
+        return cmd_report_communication_signal(paths, args.lane, args.profile)
     if args.command == "repair" and args.repair_command == "legacy-3dgirls-lineage":
         return cmd_repair_legacy_3dgirls_lineage(paths)
 

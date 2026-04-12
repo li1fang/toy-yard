@@ -111,6 +111,7 @@ class ToyYardCanonicalTests(unittest.TestCase):
         workspace_view_payload = json.loads(Path(result["workspace_view_path"]).read_text(encoding="utf-8"))
         trial_workspace_payload = json.loads(Path(result["trial_workspace_path"]).read_text(encoding="utf-8"))
         manifest_check_payload = json.loads(Path(result["manifest_artifact_check_path"]).read_text(encoding="utf-8"))
+        communication_signal_payload = json.loads(Path(result["communication_signal_path"]).read_text(encoding="utf-8"))
 
         self.assertEqual(len(summary_payload["successes"]), 2)
         self.assertEqual(registry_payload["counts"]["ready_pairs"], 1)
@@ -119,6 +120,9 @@ class ToyYardCanonicalTests(unittest.TestCase):
         self.assertEqual(summary_payload["export_contract_version"], "toy-yard-pmx-0.3")
         self.assertEqual(registry_payload["export_contract_version"], "toy-yard-pmx-0.3")
         self.assertEqual(manifest_check_payload["status"], "pass")
+        self.assertEqual(communication_signal_payload["handoff_state"], "portable_export_ready")
+        self.assertTrue(communication_signal_payload["handoff_ready"])
+        self.assertEqual(workspace_view_payload["communication_signal_path"], result["communication_signal_path"])
         for item in result["exported_manifests"]:
             manifest_path = Path(item["manifest_path"])
             self.assertTrue(manifest_path.exists())
@@ -304,6 +308,9 @@ class ToyYardCanonicalTests(unittest.TestCase):
         self.assertEqual(ready_pair["weapon_skeletal_mesh"], "/Game/PMXPipeline/Weapons/WeaponA/Meshes/CantarellaWeapon.CantarellaWeapon")
         self.assertEqual(ready_pair["equip_slot"], "weapon")
         self.assertEqual(ready_pair["preferred_attach_target"]["name"], "WeaponSocket")
+        communication_signal_payload = json.loads(Path(second_export["communication_signal_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(communication_signal_payload["handoff_state"], "runtime_registry_ready")
+        self.assertTrue(communication_signal_payload["handoff_ready"])
 
     def test_export_uses_matching_sample_conversion_manifest_when_package_metadata_points_to_preflight(self) -> None:
         legacy_root = self._copy_legacy_fixture()

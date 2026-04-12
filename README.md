@@ -44,6 +44,7 @@ Today `toy-yard` already supports:
 - legacy `3dgirls` import as a read-only external root
 - AiUE-facing PMX export views
 - AiUE roundtrip result import
+- machine-readable communication signals for PMX and motion lanes
 - motion handoff catalog admission as a shadow lane
 
 ## Architecture
@@ -109,6 +110,7 @@ toyyard report blocked
 toyyard root add --kind legacy_workspace --path C:\Users\garro\Downloads\3dgirls --name 3dgirls
 toyyard import legacy-3dgirls --root-id 2
 toyyard export aiue-pmx-view --profile default --sample <canonical_sample_id_or_alias>
+toyyard report communication-signal --lane pmx --profile default
 toyyard import aiue-results --export-root <profile_root> --trial-root <trial_root>
 ```
 
@@ -117,6 +119,7 @@ toyyard import aiue-results --export-root <profile_root> --trial-root <trial_roo
 ```powershell
 toyyard import motion-handoff --package-id 2
 toyyard report motion-catalog
+toyyard report communication-signal --lane motion
 toyyard inspect source <source_id>
 ```
 
@@ -127,12 +130,14 @@ toyyard inspect source <source_id>
 - `T1.6 Durable Roundtrip Confirmation`: passed
 - `T2A Default-Source Confirmation`: passed
 - `toy-yard export` is now viable as the default PMX source for new AiUE runs
+- `communication signal v0`: passed and emitting machine-readable handoff state
 
 ### Motion Lane
 
 - current stage: `Catalog v0`
 - admitted as a shadow lane, not yet default downstream consumption
 - first real seed sample: `ai-motion-motion-pack-handoff-2026-04-13.zip`
+- `communication signal v0`: available for motion catalog state
 
 ## Roadmap
 
@@ -140,13 +145,12 @@ toyyard inspect source <source_id>
 
 Build `toy-yard` into a stable warehouse and packet hub:
 
-1. add a machine-readable cross-repo communication signal
-2. complete the motion lane:
+1. complete the motion lane:
    - motion contract
    - motion packet export
    - motion self-check
    - first shadow consumer
-3. run `M0.5 Motion Shadow Packet Trial`
+2. run `M0.5 Motion Shadow Packet Trial`
 
 ### v2
 

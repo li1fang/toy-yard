@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from toyyard.communication_signal import build_aiue_pmx_export_signal
 from toyyard.manifest_artifact_check import write_manifest_artifact_check_report
 from toyyard.paths import ProjectPaths
 from toyyard.util import now_iso, normalize_ext, write_json
@@ -928,6 +929,33 @@ def export_aiue_pmx_view(
         metadata={"profile": profile, "counts": manifest_check_payload["counts"]},
     )
 
+    communication_signal_path = paths.aiue_pmx_communication_signal_path(profile)
+    communication_signal_payload = build_aiue_pmx_export_signal(
+        profile=profile,
+        summary_payload=summary_payload,
+        registry_payload=registry_payload,
+        manifest_check_payload=manifest_check_payload,
+        summary_path=summary_path,
+        registry_path=registry_path,
+        manifest_check_path=manifest_check_path,
+    )
+    write_json(communication_signal_path, communication_signal_payload)
+    ensure_artifact(
+        conn,
+        owner_type="sample",
+        owner_id=sample["id"],
+        stage="export",
+        artifact_kind="communication_signal",
+        path=str(communication_signal_path),
+        format=".json",
+        status=communication_signal_payload["status"],
+        metadata={
+            "profile": profile,
+            "handoff_state": communication_signal_payload["handoff_state"],
+            "handoff_ready": communication_signal_payload["handoff_ready"],
+        },
+    )
+
     if include_verify and verify_manifest_artifact:
         verify_index = {
             "generated_at_utc": now_iso(),
@@ -948,6 +976,7 @@ def export_aiue_pmx_view(
         "summary_path": str(summary_path),
         "registry_path": str(registry_path),
         "manifest_artifact_check_path": str(manifest_check_path),
+        "communication_signal_path": str(communication_signal_path),
         "sample_id": sample["canonical_sample_id"],
         "package_ids": [package["canonical_package_id"] for package in packages],
         "source_aliases": [dict(row) for row in sample_alias_rows],
@@ -1008,6 +1037,7 @@ def export_aiue_pmx_view(
         "summary_path": str(summary_path),
         "registry_path": str(registry_path),
         "manifest_artifact_check_path": str(manifest_check_path),
+        "communication_signal_path": str(communication_signal_path),
         "workspace_view_path": str(workspace_view_path),
         "trial_workspace_path": str(trial_workspace_path),
         "export_root": str(profile_dir),

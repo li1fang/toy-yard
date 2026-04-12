@@ -93,6 +93,9 @@ class ProjectPaths:
     def aiue_pmx_manifest_artifact_check_path(self, profile: str) -> Path:
         return self.aiue_pmx_summary_dir(profile) / "manifest_artifact_check.json"
 
+    def aiue_pmx_communication_signal_path(self, profile: str) -> Path:
+        return self.aiue_pmx_summary_dir(profile) / "communication_signal.json"
+
     def aiue_pmx_workspace_view_path(self, profile: str) -> Path:
         return self.aiue_pmx_workspace_views_dir(profile) / "pmx_pipeline_workspace_view.json"
 
