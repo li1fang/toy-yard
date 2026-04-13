@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from toyyard.image_info import aspect_label, image_size
+
 
 def ready_rows(conn: sqlite3.Connection, target: str) -> list[dict[str, object]]:
     rows = conn.execute(
@@ -174,3 +176,99 @@ def motion_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
             }
         )
     return catalog
+
+
+def image_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT
+          samples.canonical_sample_id,
+          packages.canonical_package_id,
+          samples.display_name,
+          packages.package_role,
+          packages.content_bucket,
+          packages.consumer_ready,
+          packages.warehouse_status,
+          packages.metadata_json
+        FROM packages
+        JOIN samples ON samples.id = packages.sample_id
+        WHERE samples.item_family = 'image'
+           OR packages.content_bucket = 'image'
+        ORDER BY samples.canonical_sample_id, packages.canonical_package_id
+        """
+    ).fetchall()
+
+    catalog: list[dict[str, object]] = []
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        catalog.append(
+            {
+                "canonical_sample_id": row["canonical_sample_id"],
+                "canonical_package_id": row["canonical_package_id"],
+                "display_name": row["display_name"],
+                "workshop_item_id": metadata.get("workshop_item_id", ""),
+                "frame_count": metadata.get("frame_count", 0),
+                "image_roles": ",".join(metadata.get("image_roles") or []),
+                "consumer_ready": row["consumer_ready"],
+                "warehouse_status": row["warehouse_status"],
+            }
+        )
+    return catalog
+
+
+def image_pick_rows(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 20,
+    workshop_item_id: str | None = None,
+) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT
+          samples.canonical_sample_id,
+          packages.canonical_package_id,
+          samples.display_name,
+          packages.metadata_json AS package_metadata_json,
+          artifacts.path AS artifact_path,
+          artifacts.metadata_json AS artifact_metadata_json
+        FROM packages
+        JOIN samples ON samples.id = packages.sample_id
+        JOIN artifacts
+          ON artifacts.owner_type = 'package'
+         AND artifacts.owner_id = packages.id
+         AND artifacts.artifact_kind = 'reference_image'
+        WHERE samples.item_family = 'image'
+        ORDER BY samples.canonical_sample_id, artifacts.id
+        """
+    ).fetchall()
+
+    selected: list[dict[str, object]] = []
+    seen_packages: set[str] = set()
+    for row in rows:
+        package_id = str(row["canonical_package_id"] or "")
+        if package_id in seen_packages:
+            continue
+        package_metadata = json.loads(row["package_metadata_json"] or "{}")
+        current_workshop_item_id = str(package_metadata.get("workshop_item_id") or "")
+        if workshop_item_id and current_workshop_item_id != str(workshop_item_id):
+            continue
+        artifact_metadata = json.loads(row["artifact_metadata_json"] or "{}")
+        frame_path = str(row["artifact_path"] or "")
+        size = image_size(frame_path)
+        selected.append(
+            {
+                "canonical_sample_id": row["canonical_sample_id"],
+                "canonical_package_id": package_id,
+                "display_name": row["display_name"],
+                "workshop_item_id": current_workshop_item_id,
+                "frame_size": aspect_label(size),
+                "duration_sec": artifact_metadata.get("duration_sec", ""),
+                "midpoint_sec": artifact_metadata.get("midpoint_sec", ""),
+                "video_relative_path": artifact_metadata.get("video_relative_path", ""),
+                "frame_path": frame_path,
+            }
+        )
+        seen_packages.add(package_id)
+        if len(selected) >= max(limit, 0):
+            break
+    return selected

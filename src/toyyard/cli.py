@@ -17,14 +17,17 @@ from toyyard.communication_signal import (
 from toyyard.constants import DEFAULT_ROOT, ROOT_KINDS, SOURCE_KINDS
 from toyyard.db import connect, init_db
 from toyyard.ingest import format_import_rows, import_path, scan_source
+from toyyard.image_shadow_import import import_wallpaper_engine_catalog
 from toyyard.legacy_3dgirls import import_legacy_3dgirls
 from toyyard.motion_handoff import import_motion_handoff
 from toyyard.paths import ProjectPaths
 from toyyard.repair import repair_legacy_3dgirls_lineage
-from toyyard.reports import aiue_ready_rows, blocked_rows, failure_rows, lineage_gap_rows, motion_catalog_rows, ready_rows
+from toyyard.reports import aiue_ready_rows, blocked_rows, failure_rows, image_catalog_rows, lineage_gap_rows, motion_catalog_rows, ready_rows
+from toyyard.reports import image_pick_rows
 from toyyard.rules import load_rules
 from toyyard.triage import run_triage
 from toyyard.util import print_rows
+from toyyard.wallpaper_engine_extractor import DEFAULT_WORKSHOP_ROOT, extract_wallpaper_engine_frames
 from toyyard.warehouse import (
     find_entity_by_alias,
     get_root,
@@ -103,11 +106,23 @@ def build_parser() -> argparse.ArgumentParser:
     import_aiue_results_parser = import_root_subparsers.add_parser("aiue-results", help="Import AiUE trial results back into toy-yard")
     import_aiue_results_parser.add_argument("--export-root", required=True)
     import_aiue_results_parser.add_argument("--trial-root", required=True)
+    import_image_shadow_parser = import_root_subparsers.add_parser("wallpaper-engine-catalog", help="Import extracted Wallpaper Engine images into the image shadow catalog")
+    import_image_shadow_parser.add_argument("--state-path", default=None)
     import_aiue_motion_results_parser = import_root_subparsers.add_parser("aiue-motion-results", help="Import AiUE motion trial results back into toy-yard")
     import_aiue_motion_results_parser.add_argument("--export-root", required=True)
     import_aiue_motion_results_parser.add_argument("--trial-root", required=True)
     import_motion_parser = import_root_subparsers.add_parser("motion-handoff", help="Import one motion handoff package into the canonical motion catalog")
     import_motion_parser.add_argument("--package-id", required=True, type=int)
+
+    extract_parser = subparsers.add_parser("extract", help="Run extractors over external media roots")
+    extract_subparsers = extract_parser.add_subparsers(dest="extract_command", required=True)
+    extract_wallpaper_parser = extract_subparsers.add_parser("wallpaper-engine", help="Extract one middle frame per Wallpaper Engine MP4 into toy-yard-managed workbench storage")
+    extract_wallpaper_parser.add_argument("--workshop-root", default=str(DEFAULT_WORKSHOP_ROOT))
+    extract_wallpaper_parser.add_argument("--ffmpeg", default=None)
+    extract_wallpaper_parser.add_argument("--ffprobe", default=None)
+    extract_wallpaper_parser.add_argument("--limit", type=int, default=None)
+    extract_wallpaper_parser.add_argument("--item-id", default=None)
+    extract_wallpaper_parser.add_argument("--force", action="store_true")
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect catalog entities")
     inspect_subparsers = inspect_parser.add_subparsers(dest="inspect_command", required=True)
@@ -115,6 +130,8 @@ def build_parser() -> argparse.ArgumentParser:
     package_parser.add_argument("package_id", type=int)
     sample_parser = inspect_subparsers.add_parser("sample", help="Inspect one canonical sample")
     sample_parser.add_argument("sample_id")
+    image_parser = inspect_subparsers.add_parser("image", help="Inspect one image-shadow sample with frame artifacts")
+    image_parser.add_argument("sample_ref")
     source_parser = inspect_subparsers.add_parser("source", help="Inspect one canonical source")
     source_parser.add_argument("source_id", type=int)
     package_alias_parser = inspect_subparsers.add_parser("package-alias", help="Inspect a canonical package via external alias")
@@ -153,6 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
     report_subparsers.add_parser("aiue-ready", help="List canonical packages ready for AiUE consumption")
     report_subparsers.add_parser("lineage-gaps", help="List canonical lineage gaps")
     report_subparsers.add_parser("motion-catalog", help="List motion catalog packages")
+    report_subparsers.add_parser("image-catalog", help="List image shadow catalog packages")
+    image_picks_parser = report_subparsers.add_parser("image-picks", help="List a small human-picking view for image shadow packages")
+    image_picks_parser.add_argument("--limit", type=int, default=20)
+    image_picks_parser.add_argument("--workshop-item-id", default=None)
     communication_signal_parser = report_subparsers.add_parser("communication-signal", help="Emit the latest machine-readable communication signal")
     communication_signal_parser.add_argument("--lane", choices=("pmx", "motion"), default="pmx")
     communication_signal_parser.add_argument("--profile", default=None)
@@ -237,6 +258,32 @@ def cmd_import_aiue_motion_results(paths: ProjectPaths, export_root: str, trial_
     )
     print_rows([result])
     conn.close()
+    return 0
+
+
+def cmd_import_wallpaper_engine_catalog(paths: ProjectPaths, state_path: str | None) -> int:
+    conn = _open_db(paths)
+    result = import_wallpaper_engine_catalog(
+        conn,
+        paths,
+        state_path=Path(state_path) if state_path else None,
+    )
+    print_rows([result])
+    conn.close()
+    return 0
+
+
+def cmd_extract_wallpaper_engine(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    result = extract_wallpaper_engine_frames(
+        paths,
+        workshop_root=Path(args.workshop_root),
+        ffmpeg_path=args.ffmpeg,
+        ffprobe_path=args.ffprobe,
+        limit=args.limit,
+        item_id=args.item_id,
+        force=bool(args.force),
+    )
+    print_rows([result])
     return 0
 
 
@@ -362,6 +409,45 @@ def cmd_export_aiue_pmx_view(paths: ProjectPaths, args: argparse.Namespace) -> i
     return 0
 
 
+def cmd_inspect_image(paths: ProjectPaths, sample_ref: str) -> int:
+    conn = _open_db(paths)
+    sample = resolve_sample(conn, sample_ref)
+    if sample is None:
+        raise SystemExit(f"Unknown image sample: {sample_ref}")
+    packages = sample_packages(conn, sample["id"])
+    print("Sample")
+    print_rows([dict(sample)])
+    print("\nImage Packages")
+    print_rows([dict(row) for row in packages])
+    for package in packages:
+        artifacts = conn.execute(
+            """
+            SELECT artifact_kind, path, metadata_json
+            FROM artifacts
+            WHERE owner_type = 'package' AND owner_id = ?
+            ORDER BY id
+            """,
+            (package["id"],),
+        ).fetchall()
+        image_rows = []
+        for artifact in artifacts:
+            metadata = json.loads(artifact["metadata_json"] or "{}")
+            image_rows.append(
+                {
+                    "artifact_kind": artifact["artifact_kind"],
+                    "path": artifact["path"],
+                    "video_relative_path": metadata.get("video_relative_path", ""),
+                    "duration_sec": metadata.get("duration_sec", ""),
+                    "midpoint_sec": metadata.get("midpoint_sec", ""),
+                    "image_role": metadata.get("image_role", ""),
+                }
+            )
+        print(f"\nArtifacts For {package['canonical_package_id']}")
+        print_rows(image_rows)
+    conn.close()
+    return 0
+
+
 def cmd_export_aiue_motion_view(paths: ProjectPaths, args: argparse.Namespace) -> int:
     sample_mode = bool(args.sample)
     package_mode = bool(args.packages)
@@ -438,6 +524,20 @@ def cmd_report_motion_catalog(paths: ProjectPaths) -> int:
     return 0
 
 
+def cmd_report_image_catalog(paths: ProjectPaths) -> int:
+    conn = _open_db(paths)
+    print_rows(image_catalog_rows(conn))
+    conn.close()
+    return 0
+
+
+def cmd_report_image_picks(paths: ProjectPaths, limit: int, workshop_item_id: str | None) -> int:
+    conn = _open_db(paths)
+    print_rows(image_pick_rows(conn, limit=limit, workshop_item_id=workshop_item_id))
+    conn.close()
+    return 0
+
+
 def cmd_report_communication_signal(paths: ProjectPaths, lane: str, profile: str | None) -> int:
     if lane == "pmx":
         if not profile:
@@ -483,14 +583,20 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_import_legacy_3dgirls(paths, args.root_id)
     if args.command == "import" and args.import_command == "aiue-results":
         return cmd_import_aiue_results(paths, args.export_root, args.trial_root)
+    if args.command == "import" and args.import_command == "wallpaper-engine-catalog":
+        return cmd_import_wallpaper_engine_catalog(paths, args.state_path)
     if args.command == "import" and args.import_command == "aiue-motion-results":
         return cmd_import_aiue_motion_results(paths, args.export_root, args.trial_root)
     if args.command == "import" and args.import_command == "motion-handoff":
         return cmd_import_motion_handoff(paths, args.package_id)
+    if args.command == "extract" and args.extract_command == "wallpaper-engine":
+        return cmd_extract_wallpaper_engine(paths, args)
     if args.command == "inspect" and args.inspect_command == "package":
         return cmd_inspect_package(paths, args.package_id)
     if args.command == "inspect" and args.inspect_command == "sample":
         return cmd_inspect_sample(paths, args.sample_id)
+    if args.command == "inspect" and args.inspect_command == "image":
+        return cmd_inspect_image(paths, args.sample_ref)
     if args.command == "inspect" and args.inspect_command == "source":
         return cmd_inspect_source(paths, args.source_id)
     if args.command == "inspect" and args.inspect_command == "package-alias":
@@ -515,6 +621,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_report_lineage_gaps(paths)
     if args.command == "report" and args.report_command == "motion-catalog":
         return cmd_report_motion_catalog(paths)
+    if args.command == "report" and args.report_command == "image-catalog":
+        return cmd_report_image_catalog(paths)
+    if args.command == "report" and args.report_command == "image-picks":
+        return cmd_report_image_picks(paths, args.limit, args.workshop_item_id)
     if args.command == "report" and args.report_command == "communication-signal":
         return cmd_report_communication_signal(paths, args.lane, args.profile)
     if args.command == "repair" and args.repair_command == "legacy-3dgirls-lineage":

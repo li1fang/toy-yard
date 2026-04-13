@@ -51,6 +51,18 @@ class ProjectPaths:
     def motion_inspect_root(self) -> Path:
         return self.root / "03_workbench" / "inspect" / "motion"
 
+    @property
+    def wallpaper_engine_extract_root(self) -> Path:
+        return self.root / "03_workbench" / "extract" / "wallpaper_engine"
+
+    @property
+    def image_shadow_root(self) -> Path:
+        return self.canonical_dir / "image_shadow"
+
+    @property
+    def wallpaper_engine_state_path(self) -> Path:
+        return self.image_shadow_root / "wallpaper_engine_extractor_state.json"
+
     def ensure_layout(self) -> None:
         for rel in DIRECTORY_LAYOUT:
             (self.root / rel).mkdir(parents=True, exist_ok=True)
@@ -166,6 +178,12 @@ class ProjectPaths:
 
     def motion_inspect_dir(self, package_id: int, display_name: str) -> Path:
         return self.motion_inspect_root / f"pkg_{package_id}__{slugify(display_name)}"
+
+    def wallpaper_engine_item_extract_dir(self, item_id: str) -> Path:
+        return self.wallpaper_engine_extract_root / item_id
+
+    def wallpaper_engine_item_manifest_path(self, item_id: str) -> Path:
+        return self.wallpaper_engine_item_extract_dir(item_id) / "extraction_manifest.json"
 
     def triage_marker_path(self, bucket: str, package_id: int) -> Path:
         return self.root / "02_triage" / bucket / f"package_{package_id}.json"
