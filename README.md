@@ -45,7 +45,8 @@ Today `toy-yard` already supports:
 - AiUE-facing PMX export views
 - AiUE roundtrip result import
 - machine-readable communication signals for PMX and motion lanes
-- motion handoff catalog admission as a shadow lane
+- motion handoff catalog admission plus packet export and result import as a shadow lane
+- image shadow lane v0 with Wallpaper Engine middle-frame extraction and catalog admission
 
 ## Architecture
 
@@ -134,10 +135,19 @@ toyyard inspect source <source_id>
 
 ### Motion Lane
 
-- current stage: `Catalog v0`
+- current stage: `M0.5 Motion Shadow Packet Trial` preparation
+- producer packet, packet self-check, and producer communication signal are in place
+- result import and ownership routing are now first-class warehouse capabilities
 - admitted as a shadow lane, not yet default downstream consumption
 - first real seed sample: `ai-motion-motion-pack-handoff-2026-04-13.zip`
-- `communication signal v0`: available for motion catalog state
+- `communication signal v0`: available for motion packet handoff state
+
+### Image Lane
+
+- current stage: `Image Shadow Lane v0`
+- first real adapter: `Wallpaper Engine Extractor`
+- real middle-frame extraction completed from Workshop root `431960`
+- first image shadow catalog import completed for extracted workshop MP4 frames
 
 ## Roadmap
 
@@ -146,11 +156,10 @@ toyyard inspect source <source_id>
 Build `toy-yard` into a stable warehouse and packet hub:
 
 1. complete the motion lane:
-   - motion contract
-   - motion packet export
-   - motion self-check
-   - first shadow consumer
-2. run `M0.5 Motion Shadow Packet Trial`
+   - freeze seam v0
+   - run `M0.5 Motion Shadow Packet Trial`
+   - stabilize result import and ownership routing
+2. only after `M0.5` closes, evaluate `M1 Default Source`
 
 ### v2
 
@@ -158,8 +167,9 @@ Grow from one pipeline into a broader exchange hub:
 
 1. admit more external asset sources
 2. admit more motion sources
-3. support multiple downstream consumers
-4. stabilize `toy-yard` as the handoff layer between warehouse truth and consumer-specific packets
+3. admit more image sources and image-derived packets
+4. support multiple downstream consumers
+5. stabilize `toy-yard` as the handoff layer between warehouse truth and consumer-specific packets
 
 ## Design Principles
 
