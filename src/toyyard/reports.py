@@ -165,6 +165,10 @@ def motion_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
                 "pack_version": metadata.get("pack_version", ""),
                 "runtime_semantics": metadata.get("runtime_semantics", ""),
                 "validation_status": metadata.get("validation_status", ""),
+                "latest_consumer_operation": metadata.get("latest_motion_consumer_operation", ""),
+                "latest_consumer_status": metadata.get("latest_motion_consumer_status", ""),
+                "latest_consumer_owner": metadata.get("latest_motion_consumer_owner", ""),
+                "latest_failure_class": metadata.get("latest_motion_failure_class", ""),
                 "consumer_ready": row["consumer_ready"],
                 "warehouse_status": row["warehouse_status"],
             }

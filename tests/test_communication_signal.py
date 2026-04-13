@@ -9,7 +9,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from toyyard.communication_signal import build_aiue_pmx_export_signal
+from toyyard.communication_signal import build_aiue_motion_export_signal, build_aiue_pmx_export_signal
 
 
 class CommunicationSignalTests(unittest.TestCase):
@@ -100,6 +100,30 @@ class CommunicationSignalTests(unittest.TestCase):
         self.assertEqual(signal["handoff_state"], "runtime_registry_ready")
         self.assertTrue(signal["handoff_ready"])
         self.assertEqual(signal["recommended_next_node"], "aiue_refresh_assets_or_downstream_trial")
+
+    def test_motion_packet_ready_for_m0_5_shadow_trial(self) -> None:
+        signal = build_aiue_motion_export_signal(
+            profile="trial-motion",
+            summary_payload={"sample_id": "sample_motion"},
+            registry_payload={
+                "sample_id": "sample_motion",
+                "clips": [
+                    {
+                        "package_id": "pkg_motion",
+                        "selection_ready": True,
+                    }
+                ],
+            },
+            packet_check_payload={"status": "pass", "counts": {"manifest_count": 1, "selection_ready_count": 1}},
+            summary_path=Path("C:/tmp/motion_summary.json"),
+            registry_path=Path("C:/tmp/motion_registry.json"),
+            packet_check_path=Path("C:/tmp/motion_check.json"),
+        )
+
+        self.assertEqual(signal["status"], "info")
+        self.assertTrue(signal["handoff_ready"])
+        self.assertEqual(signal["recommended_next_node"], "aiue_import_motion_packet")
+        self.assertIn("M0.5 shadow-consumer ingest", signal["summary"])
 
 
 if __name__ == "__main__":

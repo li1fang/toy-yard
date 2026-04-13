@@ -217,6 +217,118 @@ def build_aiue_pmx_export_signal_from_paths(paths: ProjectPaths, profile: str) -
     )
 
 
+def _motion_packet_contract_check(packet_check_payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": "motion_packet_contract",
+        "status": str(packet_check_payload.get("status") or "attention"),
+        "details": dict(packet_check_payload.get("counts") or {}),
+    }
+
+
+def _motion_packet_selection_check(registry_payload: dict[str, Any]) -> dict[str, Any]:
+    clips = list(registry_payload.get("clips") or [])
+    ready_count = sum(1 for entry in clips if bool(entry.get("selection_ready")))
+    if not clips:
+        status = "attention"
+    elif ready_count > 0:
+        status = "pass"
+    else:
+        status = "attention"
+    return {
+        "name": "motion_packet_selection",
+        "status": status,
+        "details": {
+            "clip_count": len(clips),
+            "selection_ready_count": ready_count,
+        },
+    }
+
+
+def build_aiue_motion_export_signal(
+    *,
+    profile: str,
+    summary_payload: dict[str, Any],
+    registry_payload: dict[str, Any],
+    packet_check_payload: dict[str, Any],
+    summary_path: Path,
+    registry_path: Path,
+    packet_check_path: Path,
+) -> dict[str, Any]:
+    contract_check = _motion_packet_contract_check(packet_check_payload)
+    selection_check = _motion_packet_selection_check(registry_payload)
+
+    if contract_check["status"] != "pass":
+        status = "blocker"
+        handoff_state = "motion_packet_blocked"
+        handoff_ready = False
+        problem_owner = "toy-yard"
+        problem_layer = "packet_check"
+        recommended_next_node = "repair_motion_packet_locally"
+        summary = "Motion packet is not self-consistent yet; repair export artifacts and validation before involving AiUE."
+    elif selection_check["status"] != "pass":
+        status = "attention"
+        handoff_state = "motion_packet_unselected"
+        handoff_ready = False
+        problem_owner = "toy-yard"
+        problem_layer = "packet_selection"
+        recommended_next_node = "repair_motion_packet_selection"
+        summary = "Motion packet exists but no clip is currently selection-ready for AiUE ingest."
+    else:
+        status = "info"
+        handoff_state = "motion_packet_ready"
+        handoff_ready = True
+        problem_owner = "none"
+        problem_layer = "none"
+        recommended_next_node = "aiue_import_motion_packet"
+        summary = "Motion packet is portable, validated, and ready for AiUE M0.5 shadow-consumer ingest."
+
+    return {
+        "signal_kind": "toy_yard_communication_signal",
+        "signal_version": COMMUNICATION_SIGNAL_VERSION,
+        "generated_at_utc": now_iso(),
+        "producer": "toy-yard",
+        "counterparty_system": "AiUE",
+        "lane": "motion",
+        "profile": profile,
+        "sample_id": str(summary_payload.get("sample_id") or registry_payload.get("sample_id") or ""),
+        "sample_ids": list(summary_payload.get("sample_ids") or registry_payload.get("sample_ids") or []),
+        "scenario_ids": list(summary_payload.get("scenario_ids") or registry_payload.get("scenario_ids") or []),
+        "status": status,
+        "handoff_state": handoff_state,
+        "handoff_ready": handoff_ready,
+        "handoff_target": "AiUE" if handoff_ready else "none",
+        "needs_counterparty_contact": False,
+        "problem_owner": problem_owner,
+        "problem_layer": problem_layer,
+        "recommended_next_node": recommended_next_node,
+        "summary": summary,
+        "checks": [contract_check, selection_check],
+        "evidence_paths": {
+            "summary_path": str(summary_path),
+            "registry_path": str(registry_path),
+            "motion_packet_check_path": str(packet_check_path),
+        },
+    }
+
+
+def build_aiue_motion_export_signal_from_paths(paths: ProjectPaths, profile: str) -> dict[str, Any]:
+    summary_path = paths.aiue_motion_summary_path(profile)
+    registry_path = paths.aiue_motion_registry_path(profile)
+    packet_check_path = paths.aiue_motion_packet_check_path(profile)
+    summary_payload = load_json(summary_path)
+    registry_payload = load_json(registry_path)
+    packet_check_payload = load_json(packet_check_path)
+    return build_aiue_motion_export_signal(
+        profile=profile,
+        summary_payload=summary_payload,
+        registry_payload=registry_payload,
+        packet_check_payload=packet_check_payload,
+        summary_path=summary_path,
+        registry_path=registry_path,
+        packet_check_path=packet_check_path,
+    )
+
+
 def build_motion_catalog_signal(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """

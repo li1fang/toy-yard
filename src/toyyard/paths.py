@@ -36,8 +36,16 @@ class ProjectPaths:
         return self.root / "05_publish" / "aiue_pmx"
 
     @property
+    def aiue_motion_publish_dir(self) -> Path:
+        return self.root / "05_publish" / "aiue_motion"
+
+    @property
     def aiue_roundtrip_dir(self) -> Path:
         return self.canonical_dir / "aiue_roundtrip"
+
+    @property
+    def aiue_motion_roundtrip_dir(self) -> Path:
+        return self.canonical_dir / "aiue_motion_roundtrip"
 
     @property
     def motion_inspect_root(self) -> Path:
@@ -102,6 +110,42 @@ class ProjectPaths:
     def aiue_pmx_trial_workspace_path(self, profile: str) -> Path:
         return self.aiue_pmx_workspace_views_dir(profile) / "pipeline_workspace.toy-yard.example.json"
 
+    def aiue_motion_profile_dir(self, profile: str) -> Path:
+        return self.aiue_motion_publish_dir / slugify(profile)
+
+    def aiue_motion_clips_dir(self, profile: str) -> Path:
+        return self.aiue_motion_profile_dir(profile) / "clips"
+
+    def aiue_motion_clip_dir(self, profile: str, package_id: str) -> Path:
+        return self.aiue_motion_clips_dir(profile) / package_id
+
+    def aiue_motion_summary_dir(self, profile: str) -> Path:
+        return self.aiue_motion_profile_dir(profile) / "summary"
+
+    def aiue_motion_workspace_views_dir(self, profile: str) -> Path:
+        return self.aiue_motion_profile_dir(profile) / "workspace_views"
+
+    def aiue_motion_clip_manifest_path(self, profile: str, package_id: str) -> Path:
+        return self.aiue_motion_clip_dir(profile, package_id) / "manifest.json"
+
+    def aiue_motion_summary_path(self, profile: str) -> Path:
+        return self.aiue_motion_summary_dir(profile) / "motion_suite_summary.json"
+
+    def aiue_motion_registry_path(self, profile: str) -> Path:
+        return self.aiue_motion_summary_dir(profile) / "motion_clip_registry.json"
+
+    def aiue_motion_packet_check_path(self, profile: str) -> Path:
+        return self.aiue_motion_summary_dir(profile) / "motion_packet_check.json"
+
+    def aiue_motion_communication_signal_path(self, profile: str) -> Path:
+        return self.aiue_motion_summary_dir(profile) / "communication_signal.json"
+
+    def aiue_motion_workspace_view_path(self, profile: str) -> Path:
+        return self.aiue_motion_workspace_views_dir(profile) / "motion_pipeline_workspace_view.json"
+
+    def aiue_motion_trial_workspace_path(self, profile: str) -> Path:
+        return self.aiue_motion_workspace_views_dir(profile) / "pipeline_workspace.toy-yard.motion.example.json"
+
     def aiue_roundtrip_sample_dir(self, sample_id: str) -> Path:
         return self.aiue_roundtrip_dir / sample_id
 
@@ -110,6 +154,15 @@ class ProjectPaths:
 
     def aiue_roundtrip_package_dir(self, sample_id: str, package_id: str) -> Path:
         return self.aiue_roundtrip_sample_dir(sample_id) / package_id
+
+    def aiue_motion_roundtrip_sample_dir(self, sample_id: str) -> Path:
+        return self.aiue_motion_roundtrip_dir / sample_id
+
+    def aiue_motion_roundtrip_sample_artifact_dir(self, sample_id: str) -> Path:
+        return self.aiue_motion_roundtrip_sample_dir(sample_id) / "sample"
+
+    def aiue_motion_roundtrip_package_dir(self, sample_id: str, package_id: str) -> Path:
+        return self.aiue_motion_roundtrip_sample_dir(sample_id) / package_id
 
     def motion_inspect_dir(self, package_id: int, display_name: str) -> Path:
         return self.motion_inspect_root / f"pkg_{package_id}__{slugify(display_name)}"

@@ -7,7 +7,13 @@ from pathlib import Path
 
 from toyyard.aiue_roundtrip import import_aiue_results
 from toyyard.aiue_export import export_aiue_pmx_view
-from toyyard.communication_signal import build_aiue_pmx_export_signal_from_paths, build_motion_catalog_signal
+from toyyard.aiue_motion_export import export_aiue_motion_view
+from toyyard.aiue_motion_roundtrip import import_aiue_motion_results
+from toyyard.communication_signal import (
+    build_aiue_motion_export_signal_from_paths,
+    build_aiue_pmx_export_signal_from_paths,
+    build_motion_catalog_signal,
+)
 from toyyard.constants import DEFAULT_ROOT, ROOT_KINDS, SOURCE_KINDS
 from toyyard.db import connect, init_db
 from toyyard.ingest import format_import_rows, import_path, scan_source
@@ -97,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     import_aiue_results_parser = import_root_subparsers.add_parser("aiue-results", help="Import AiUE trial results back into toy-yard")
     import_aiue_results_parser.add_argument("--export-root", required=True)
     import_aiue_results_parser.add_argument("--trial-root", required=True)
+    import_aiue_motion_results_parser = import_root_subparsers.add_parser("aiue-motion-results", help="Import AiUE motion trial results back into toy-yard")
+    import_aiue_motion_results_parser.add_argument("--export-root", required=True)
+    import_aiue_motion_results_parser.add_argument("--trial-root", required=True)
     import_motion_parser = import_root_subparsers.add_parser("motion-handoff", help="Import one motion handoff package into the canonical motion catalog")
     import_motion_parser.add_argument("--package-id", required=True, type=int)
 
@@ -129,6 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_aiue_parser.add_argument("--profile", required=True)
     export_aiue_parser.add_argument("--sample", required=True)
     export_aiue_parser.add_argument("--include-verify", action="store_true")
+    export_motion_parser = export_subparsers.add_parser("aiue-motion-view", help="Export a toy-yard motion sample as an AiUE motion packet")
+    export_motion_parser.add_argument("--profile", required=True)
+    export_motion_parser.add_argument("--sample", default=None)
+    export_motion_parser.add_argument("--package", dest="packages", action="append", default=[])
 
     report_parser = subparsers.add_parser("report", help="Run catalog reports")
     report_subparsers = report_parser.add_subparsers(dest="report_command", required=True)
@@ -209,6 +222,19 @@ def cmd_import_aiue_results(paths: ProjectPaths, export_root: str, trial_root: s
 def cmd_import_motion_handoff(paths: ProjectPaths, package_id: int) -> int:
     conn = _open_db(paths)
     result = import_motion_handoff(conn, paths, package_id=package_id)
+    print_rows([result])
+    conn.close()
+    return 0
+
+
+def cmd_import_aiue_motion_results(paths: ProjectPaths, export_root: str, trial_root: str) -> int:
+    conn = _open_db(paths)
+    result = import_aiue_motion_results(
+        conn,
+        paths,
+        export_root=Path(export_root),
+        trial_root=Path(trial_root),
+    )
     print_rows([result])
     conn.close()
     return 0
@@ -336,6 +362,40 @@ def cmd_export_aiue_pmx_view(paths: ProjectPaths, args: argparse.Namespace) -> i
     return 0
 
 
+def cmd_export_aiue_motion_view(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    sample_mode = bool(args.sample)
+    package_mode = bool(args.packages)
+    if sample_mode == package_mode:
+        raise SystemExit("`toyyard export aiue-motion-view` requires exactly one of --sample or --package.")
+    conn = _open_db(paths)
+    result = export_aiue_motion_view(
+        conn,
+        paths,
+        profile=args.profile,
+        sample_ref=args.sample,
+        package_refs=args.packages,
+    )
+    print_rows(
+        [
+            {
+                "profile": result["profile"],
+                "sample_id": result["sample_id"],
+                "sample_ids": ",".join(result["sample_ids"]),
+                "scenario_ids": ",".join(result["scenario_ids"]),
+                "packages": len(result["packages"]),
+                "export_root": result["export_root"],
+                "summary_path": result["summary_path"],
+                "registry_path": result["registry_path"],
+                "motion_packet_check_path": result["motion_packet_check_path"],
+                "communication_signal_path": result["communication_signal_path"],
+                "trial_workspace_path": result["trial_workspace_path"],
+            }
+        ]
+    )
+    conn.close()
+    return 0
+
+
 def cmd_report_ready(paths: ProjectPaths, target: str) -> int:
     conn = _open_db(paths)
     print_rows(ready_rows(conn, target))
@@ -386,6 +446,11 @@ def cmd_report_communication_signal(paths: ProjectPaths, lane: str, profile: str
         print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
         return 0
 
+    if profile:
+        payload = build_aiue_motion_export_signal_from_paths(paths, profile)
+        print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
+        return 0
+
     conn = _open_db(paths)
     payload = build_motion_catalog_signal(conn)
     conn.close()
@@ -418,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_import_legacy_3dgirls(paths, args.root_id)
     if args.command == "import" and args.import_command == "aiue-results":
         return cmd_import_aiue_results(paths, args.export_root, args.trial_root)
+    if args.command == "import" and args.import_command == "aiue-motion-results":
+        return cmd_import_aiue_motion_results(paths, args.export_root, args.trial_root)
     if args.command == "import" and args.import_command == "motion-handoff":
         return cmd_import_motion_handoff(paths, args.package_id)
     if args.command == "inspect" and args.inspect_command == "package":
@@ -434,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_lineage_show(paths, args.sample_id)
     if args.command == "export" and args.export_command == "aiue-pmx-view":
         return cmd_export_aiue_pmx_view(paths, args)
+    if args.command == "export" and args.export_command == "aiue-motion-view":
+        return cmd_export_aiue_motion_view(paths, args)
     if args.command == "report" and args.report_command == "ready":
         return cmd_report_ready(paths, args.target)
     if args.command == "report" and args.report_command == "blocked":

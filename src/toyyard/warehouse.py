@@ -576,7 +576,25 @@ def resolve_sample(conn: sqlite3.Connection, sample_ref: str) -> sqlite3.Row | N
     row = conn.execute("SELECT * FROM samples WHERE canonical_sample_id = ?", (sample_ref,)).fetchone()
     if row is not None:
         return row
-    return find_entity_by_alias(conn, entity_type="sample", external_system="3dgirls", alias_value=sample_ref)
+    alias = conn.execute(
+        """
+        SELECT *
+        FROM aliases
+        WHERE entity_type = 'sample' AND alias_value = ?
+        ORDER BY
+          CASE external_system
+            WHEN '3dgirls' THEN 0
+            WHEN 'ai_motion' THEN 1
+            ELSE 2
+          END,
+          id
+        LIMIT 1
+        """,
+        (sample_ref,),
+    ).fetchone()
+    if alias is None:
+        return None
+    return _row_by_id(conn, "samples", alias["entity_id"])
 
 
 def sample_packages(conn: sqlite3.Connection, sample_id: int) -> list[sqlite3.Row]:
