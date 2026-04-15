@@ -272,3 +272,38 @@ def image_pick_rows(
         if len(selected) >= max(limit, 0):
             break
     return selected
+
+
+def audio_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    rows = conn.execute(
+        """
+        SELECT
+          samples.canonical_sample_id,
+          packages.canonical_package_id,
+          samples.display_name,
+          packages.contract_type,
+          packages.warehouse_status,
+          packages.metadata_json
+        FROM packages
+        JOIN samples ON samples.id = packages.sample_id
+        WHERE samples.item_family = 'audio'
+           OR packages.content_bucket = 'audio'
+        ORDER BY samples.canonical_sample_id, packages.canonical_package_id
+        """
+    ).fetchall()
+
+    catalog: list[dict[str, object]] = []
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        catalog.append(
+            {
+                "canonical_sample_id": row["canonical_sample_id"],
+                "canonical_package_id": row["canonical_package_id"],
+                "display_name": row["display_name"],
+                "contract_type": row["contract_type"],
+                "language": metadata.get("language", ""),
+                "duration_sec": metadata.get("duration_sec", 0.0),
+                "warehouse_status": row["warehouse_status"],
+            }
+        )
+    return catalog

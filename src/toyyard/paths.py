@@ -60,6 +60,18 @@ class ProjectPaths:
         return self.canonical_dir / "image_shadow"
 
     @property
+    def audio_workbench_root(self) -> Path:
+        return self.root / "03_workbench" / "audio"
+
+    @property
+    def audio_canonical_root(self) -> Path:
+        return self.canonical_dir / "audio"
+
+    @property
+    def audio_publish_root(self) -> Path:
+        return self.root / "05_publish" / "audio"
+
+    @property
     def wallpaper_engine_state_path(self) -> Path:
         return self.image_shadow_root / "wallpaper_engine_extractor_state.json"
 
@@ -184,6 +196,15 @@ class ProjectPaths:
 
     def wallpaper_engine_item_manifest_path(self, item_id: str) -> Path:
         return self.wallpaper_engine_item_extract_dir(item_id) / "extraction_manifest.json"
+
+    def audio_sample_dir(self, sample_id: str) -> Path:
+        return self.audio_canonical_root / sample_id
+
+    def audio_package_dir(self, sample_id: str, package_id: str) -> Path:
+        return self.audio_sample_dir(sample_id) / package_id
+
+    def audio_package_manifest_path(self, sample_id: str, package_id: str) -> Path:
+        return self.audio_package_dir(sample_id, package_id) / "promotion_manifest.json"
 
     def triage_marker_path(self, bucket: str, package_id: int) -> Path:
         return self.root / "02_triage" / bucket / f"package_{package_id}.json"

@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from toyyard.audio_session import import_audio_session
 from toyyard.aiue_roundtrip import import_aiue_results
 from toyyard.aiue_export import export_aiue_pmx_view
 from toyyard.aiue_motion_export import export_aiue_motion_view
@@ -22,7 +23,7 @@ from toyyard.legacy_3dgirls import import_legacy_3dgirls
 from toyyard.motion_handoff import import_motion_handoff
 from toyyard.paths import ProjectPaths
 from toyyard.repair import repair_legacy_3dgirls_lineage
-from toyyard.reports import aiue_ready_rows, blocked_rows, failure_rows, image_catalog_rows, lineage_gap_rows, motion_catalog_rows, ready_rows
+from toyyard.reports import aiue_ready_rows, audio_catalog_rows, blocked_rows, failure_rows, image_catalog_rows, lineage_gap_rows, motion_catalog_rows, ready_rows
 from toyyard.reports import image_pick_rows
 from toyyard.rules import load_rules
 from toyyard.triage import run_triage
@@ -113,6 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     import_aiue_motion_results_parser.add_argument("--trial-root", required=True)
     import_motion_parser = import_root_subparsers.add_parser("motion-handoff", help="Import one motion handoff package into the canonical motion catalog")
     import_motion_parser.add_argument("--package-id", required=True, type=int)
+    import_audio_session_parser = import_root_subparsers.add_parser("audio-session", help="Import one ComfyUI audio session into the canonical audio catalog")
+    import_audio_session_parser.add_argument("--manifest-path", required=True)
 
     extract_parser = subparsers.add_parser("extract", help="Run extractors over external media roots")
     extract_subparsers = extract_parser.add_subparsers(dest="extract_command", required=True)
@@ -171,6 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
     report_subparsers.add_parser("lineage-gaps", help="List canonical lineage gaps")
     report_subparsers.add_parser("motion-catalog", help="List motion catalog packages")
     report_subparsers.add_parser("image-catalog", help="List image shadow catalog packages")
+    report_subparsers.add_parser("audio-catalog", help="List canonical audio session packages")
     image_picks_parser = report_subparsers.add_parser("image-picks", help="List a small human-picking view for image shadow packages")
     image_picks_parser.add_argument("--limit", type=int, default=20)
     image_picks_parser.add_argument("--workshop-item-id", default=None)
@@ -245,6 +249,14 @@ def cmd_import_motion_handoff(paths: ProjectPaths, package_id: int) -> int:
     result = import_motion_handoff(conn, paths, package_id=package_id)
     print_rows([result])
     conn.close()
+    return 0
+
+
+def cmd_import_audio_session(paths: ProjectPaths, manifest_path: str) -> int:
+    conn = _open_db(paths)
+    result = import_audio_session(conn, paths, manifest_path=Path(manifest_path))
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True))
     return 0
 
 
@@ -531,6 +543,13 @@ def cmd_report_image_catalog(paths: ProjectPaths) -> int:
     return 0
 
 
+def cmd_report_audio_catalog(paths: ProjectPaths) -> int:
+    conn = _open_db(paths)
+    print_rows(audio_catalog_rows(conn))
+    conn.close()
+    return 0
+
+
 def cmd_report_image_picks(paths: ProjectPaths, limit: int, workshop_item_id: str | None) -> int:
     conn = _open_db(paths)
     print_rows(image_pick_rows(conn, limit=limit, workshop_item_id=workshop_item_id))
@@ -589,6 +608,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_import_aiue_motion_results(paths, args.export_root, args.trial_root)
     if args.command == "import" and args.import_command == "motion-handoff":
         return cmd_import_motion_handoff(paths, args.package_id)
+    if args.command == "import" and args.import_command == "audio-session":
+        return cmd_import_audio_session(paths, args.manifest_path)
     if args.command == "extract" and args.extract_command == "wallpaper-engine":
         return cmd_extract_wallpaper_engine(paths, args)
     if args.command == "inspect" and args.inspect_command == "package":
@@ -623,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_report_motion_catalog(paths)
     if args.command == "report" and args.report_command == "image-catalog":
         return cmd_report_image_catalog(paths)
+    if args.command == "report" and args.report_command == "audio-catalog":
+        return cmd_report_audio_catalog(paths)
     if args.command == "report" and args.report_command == "image-picks":
         return cmd_report_image_picks(paths, args.limit, args.workshop_item_id)
     if args.command == "report" and args.report_command == "communication-signal":

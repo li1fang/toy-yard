@@ -57,16 +57,19 @@ DIRECTORY_LAYOUT = (
     "03_workbench/extract",
     "03_workbench/convert",
     "03_workbench/test",
+    "03_workbench/audio",
     "04_registry/raw",
     "04_registry/unpacked",
     "04_registry/normalized",
     "04_registry/previews",
     "04_registry/manifests",
     "04_registry/canonical",
+    "04_registry/canonical/audio",
     "05_publish/ue_ready",
     "05_publish/blender_ready",
     "05_publish/source_exports",
     "05_publish/aiue_pmx",
+    "05_publish/audio",
     "90_reject/classify_failed",
     "90_reject/extract_failed",
     "90_reject/test_failed",
@@ -82,6 +85,7 @@ DEFAULT_RULE_FILES = {
 [signals]
 mesh_extensions = [".nif", ".fbx", ".obj", ".gltf", ".glb", ".mesh", ".msh"]
 texture_extensions = [".dds", ".png", ".jpg", ".jpeg", ".tga", ".bmp"]
+audio_extensions = [".wav", ".flac", ".mp3", ".m4a", ".ogg", ".opus"]
 plugin_extensions = [".esp", ".esm", ".esl", ".ini", ".json", ".xml"]
 animation_extensions = [".hkx", ".anim", ".vmd", ".vpd", ".motion"]
 archive_extensions = [".7z", ".zip", ".rar"]
