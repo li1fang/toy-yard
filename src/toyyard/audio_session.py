@@ -17,6 +17,7 @@ from toyyard.warehouse import (
     ensure_sample,
     ensure_source,
     ensure_source_link,
+    json_loads,
     make_canonical_id,
     register_root,
 )
@@ -29,11 +30,25 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _copy_if_needed(source: Path, target: Path) -> Path:
+_AUDIO_CONTRACT_RANK = {
+    "single_utterance_audio_v0": 1,
+    "single_utterance_wav_v0": 1,
+    "transcribed_audio_v0": 2,
+}
+
+
+def _copy_managed_artifact(source: Path, target: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.exists():
-        shutil.copy2(source, target)
+    source_resolved = source.expanduser().resolve()
+    target_resolved = target.expanduser().resolve()
+    if source_resolved != target_resolved:
+        shutil.copy2(source_resolved, target_resolved)
     return target
+
+
+def _path_suffix(path: Path, fallback: str) -> str:
+    suffix = path.suffix.lower()
+    return suffix if suffix else fallback
 
 
 def _artifact_copy(
@@ -46,7 +61,52 @@ def _artifact_copy(
     source = Path(source_path).expanduser().resolve()
     if not source.exists():
         return None
-    return _copy_if_needed(source, target_dir / (source.name or default_name))
+    target_name = source.name or default_name
+    return _copy_managed_artifact(source, target_dir / target_name)
+
+
+def _audio_contract_type(normalized_path: Path, downloaded: dict[str, Any]) -> str:
+    if downloaded.get("result_json") or downloaded.get("transcript_text"):
+        return "transcribed_audio_v0"
+    if normalized_path.suffix.lower() == ".wav":
+        return "single_utterance_wav_v0"
+    return "single_utterance_audio_v0"
+
+
+def _preferred_audio_contract(current: str, incoming: str) -> str:
+    current_rank = _AUDIO_CONTRACT_RANK.get(current, 0)
+    incoming_rank = _AUDIO_CONTRACT_RANK.get(incoming, 0)
+    if incoming_rank >= current_rank:
+        return incoming
+    return current
+
+
+def _refresh_audio_package(
+    conn: sqlite3.Connection,
+    *,
+    package_id: int,
+    contract_type: str,
+    metadata: dict[str, Any],
+) -> sqlite3.Row:
+    existing = conn.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
+    if existing is None:
+        raise ValueError(f"Unknown package id: {package_id}")
+    effective_contract = _preferred_audio_contract(str(existing["contract_type"] or ""), contract_type)
+    merged_metadata = json_loads(existing["metadata_json"])
+    merged_metadata.update({key: value for key, value in metadata.items() if value not in (None, "")})
+    conn.execute(
+        """
+        UPDATE packages
+        SET contract_type = ?, metadata_json = ?
+        WHERE id = ?
+        """,
+        (effective_contract, json.dumps(merged_metadata, ensure_ascii=True, sort_keys=True), package_id),
+    )
+    conn.commit()
+    refreshed = conn.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
+    if refreshed is None:
+        raise ValueError(f"Package vanished during refresh: {package_id}")
+    return refreshed
 
 
 def import_audio_session(
@@ -77,9 +137,9 @@ def import_audio_session(
         raise FileNotFoundError(f"normalized audio is missing: {normalized_path}")
 
     display_name = (source_path.stem if source_path else normalized_path.stem) or session_id
-    contract_type = "transcribed_audio_v0" if downloaded.get("result_json") or downloaded.get("transcript_text") else "single_utterance_wav_v0"
+    contract_type = _audio_contract_type(normalized_path, downloaded)
     sample_id = make_canonical_id("sample", "audio", "comfyui_remote_foundry", session_id, display_name=display_name)
-    package_id = make_canonical_id("pkg", "audio", "comfyui_remote_foundry", session_id, contract_type, display_name=display_name)
+    package_id = make_canonical_id("pkg", "audio", "comfyui_remote_foundry", session_id, display_name=display_name)
 
     sample_dir = paths.audio_sample_dir(sample_id)
     package_dir = paths.audio_package_dir(sample_id, package_id)
@@ -88,7 +148,10 @@ def import_audio_session(
     transcript_dir = package_dir / "transcripts"
 
     copied_source_path = _artifact_copy(str(source_path) if source_path else None, source_dir, "source_audio.wav")
-    copied_normalized_path = _copy_if_needed(normalized_path, normalized_dir / "normalized_audio.wav")
+    copied_normalized_path = _copy_managed_artifact(
+        normalized_path,
+        normalized_dir / f"normalized_audio{_path_suffix(normalized_path, '.wav')}",
+    )
     copied_transcript_path = _artifact_copy(downloaded.get("transcript_text"), transcript_dir, "transcript.txt")
     copied_segments_path = _artifact_copy(downloaded.get("segments_json"), transcript_dir, "segments.json")
 
@@ -172,6 +235,16 @@ def import_audio_session(
         contract_type=contract_type,
         consumer_ready=False,
         warehouse_status="cataloged",
+        metadata={
+            "session_id": session_id,
+            "duration_sec": float(result_summary.get("duration_sec") or normalized_payload.get("duration_sec") or 0.0),
+            "language": result_summary.get("language", ""),
+        },
+    )
+    package = _refresh_audio_package(
+        conn,
+        package_id=package["id"],
+        contract_type=contract_type,
         metadata={
             "session_id": session_id,
             "duration_sec": float(result_summary.get("duration_sec") or normalized_payload.get("duration_sec") or 0.0),

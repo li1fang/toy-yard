@@ -303,6 +303,8 @@ def audio_catalog_rows(conn: sqlite3.Connection) -> list[dict[str, object]]:
                 "contract_type": row["contract_type"],
                 "language": metadata.get("language", ""),
                 "duration_sec": metadata.get("duration_sec", 0.0),
+                "availability": metadata.get("availability", "local"),
+                "replicated_from_node": metadata.get("replicated_from_node", ""),
                 "warehouse_status": row["warehouse_status"],
             }
         )

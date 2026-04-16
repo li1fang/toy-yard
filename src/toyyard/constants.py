@@ -70,6 +70,7 @@ DIRECTORY_LAYOUT = (
     "05_publish/source_exports",
     "05_publish/aiue_pmx",
     "05_publish/audio",
+    "_exchange/index_packets",
     "90_reject/classify_failed",
     "90_reject/extract_failed",
     "90_reject/test_failed",

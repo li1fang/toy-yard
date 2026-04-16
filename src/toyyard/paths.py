@@ -75,6 +75,14 @@ class ProjectPaths:
     def wallpaper_engine_state_path(self) -> Path:
         return self.image_shadow_root / "wallpaper_engine_extractor_state.json"
 
+    @property
+    def exchange_root(self) -> Path:
+        return self.root / "_exchange"
+
+    @property
+    def index_packet_root(self) -> Path:
+        return self.exchange_root / "index_packets"
+
     def ensure_layout(self) -> None:
         for rel in DIRECTORY_LAYOUT:
             (self.root / rel).mkdir(parents=True, exist_ok=True)
@@ -205,6 +213,9 @@ class ProjectPaths:
 
     def audio_package_manifest_path(self, sample_id: str, package_id: str) -> Path:
         return self.audio_package_dir(sample_id, package_id) / "promotion_manifest.json"
+
+    def audio_index_packet_path(self, node_id: str, session_id: str) -> Path:
+        return self.index_packet_root / f"audio__{slugify(node_id)}__{slugify(session_id)}.json"
 
     def triage_marker_path(self, bucket: str, package_id: int) -> Path:
         return self.root / "02_triage" / bucket / f"package_{package_id}.json"

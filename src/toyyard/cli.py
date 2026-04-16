@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from toyyard.audio_index_packet import export_audio_index_packet, import_audio_index_packet
 from toyyard.audio_session import import_audio_session
 from toyyard.aiue_roundtrip import import_aiue_results
 from toyyard.aiue_export import export_aiue_pmx_view
@@ -116,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     import_motion_parser.add_argument("--package-id", required=True, type=int)
     import_audio_session_parser = import_root_subparsers.add_parser("audio-session", help="Import one ComfyUI audio session into the canonical audio catalog")
     import_audio_session_parser.add_argument("--manifest-path", required=True)
+    import_audio_index_packet_parser = import_root_subparsers.add_parser("audio-index-packet", help="Import one SSH-synced audio index packet without copying media data")
+    import_audio_index_packet_parser.add_argument("--packet-path", required=True)
 
     extract_parser = subparsers.add_parser("extract", help="Run extractors over external media roots")
     extract_subparsers = extract_parser.add_subparsers(dest="extract_command", required=True)
@@ -162,6 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_motion_parser.add_argument("--profile", required=True)
     export_motion_parser.add_argument("--sample", default=None)
     export_motion_parser.add_argument("--package", dest="packages", action="append", default=[])
+    export_audio_index_parser = export_subparsers.add_parser("audio-index-packet", help="Export one canonical audio session as an index-only packet for SSH replication")
+    export_audio_index_parser.add_argument("--session-id", required=True)
+    export_audio_index_parser.add_argument("--node-id", required=True)
+    export_audio_index_parser.add_argument("--output", default=None)
 
     report_parser = subparsers.add_parser("report", help="Run catalog reports")
     report_subparsers = report_parser.add_subparsers(dest="report_command", required=True)
@@ -255,6 +262,14 @@ def cmd_import_motion_handoff(paths: ProjectPaths, package_id: int) -> int:
 def cmd_import_audio_session(paths: ProjectPaths, manifest_path: str) -> int:
     conn = _open_db(paths)
     result = import_audio_session(conn, paths, manifest_path=Path(manifest_path))
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True))
+    return 0
+
+
+def cmd_import_audio_index_packet(paths: ProjectPaths, packet_path: str) -> int:
+    conn = _open_db(paths)
+    result = import_audio_index_packet(conn, paths, packet_path=Path(packet_path))
     conn.close()
     print(json.dumps(result, ensure_ascii=True))
     return 0
@@ -494,6 +509,20 @@ def cmd_export_aiue_motion_view(paths: ProjectPaths, args: argparse.Namespace) -
     return 0
 
 
+def cmd_export_audio_index_packet(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = export_audio_index_packet(
+        conn,
+        paths,
+        session_id=args.session_id,
+        node_id=args.node_id,
+        output_path=Path(args.output) if args.output else None,
+    )
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True))
+    return 0
+
+
 def cmd_report_ready(paths: ProjectPaths, target: str) -> int:
     conn = _open_db(paths)
     print_rows(ready_rows(conn, target))
@@ -610,6 +639,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_import_motion_handoff(paths, args.package_id)
     if args.command == "import" and args.import_command == "audio-session":
         return cmd_import_audio_session(paths, args.manifest_path)
+    if args.command == "import" and args.import_command == "audio-index-packet":
+        return cmd_import_audio_index_packet(paths, args.packet_path)
     if args.command == "extract" and args.extract_command == "wallpaper-engine":
         return cmd_extract_wallpaper_engine(paths, args)
     if args.command == "inspect" and args.inspect_command == "package":
@@ -630,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_export_aiue_pmx_view(paths, args)
     if args.command == "export" and args.export_command == "aiue-motion-view":
         return cmd_export_aiue_motion_view(paths, args)
+    if args.command == "export" and args.export_command == "audio-index-packet":
+        return cmd_export_audio_index_packet(paths, args)
     if args.command == "report" and args.report_command == "ready":
         return cmd_report_ready(paths, args.target)
     if args.command == "report" and args.report_command == "blocked":
