@@ -40,6 +40,10 @@ class ProjectPaths:
         return self.root / "05_publish" / "aiue_motion"
 
     @property
+    def bodypaint_publish_dir(self) -> Path:
+        return self.root / "05_publish" / "bodypaint"
+
+    @property
     def aiue_roundtrip_dir(self) -> Path:
         return self.canonical_dir / "aiue_roundtrip"
 
@@ -177,6 +181,45 @@ class ProjectPaths:
 
     def aiue_motion_trial_workspace_path(self, profile: str) -> Path:
         return self.aiue_motion_workspace_views_dir(profile) / "pipeline_workspace.toy-yard.motion.example.json"
+
+    def bodypaint_profile_dir(self, profile: str) -> Path:
+        return self.bodypaint_publish_dir / slugify(profile)
+
+    def bodypaint_assets_dir(self, profile: str) -> Path:
+        return self.bodypaint_profile_dir(profile) / "assets"
+
+    def bodypaint_asset_dir(self, profile: str, package_id: str) -> Path:
+        return self.bodypaint_assets_dir(profile) / package_id
+
+    def bodypaint_asset_manifest_path(self, profile: str, package_id: str) -> Path:
+        return self.bodypaint_asset_dir(profile, package_id) / "bodypaint_input_manifest.json"
+
+    def bodypaint_summary_dir(self, profile: str) -> Path:
+        return self.bodypaint_profile_dir(profile) / "summary"
+
+    def bodypaint_summary_path(self, profile: str) -> Path:
+        return self.bodypaint_summary_dir(profile) / "bodypaint_suite_summary.json"
+
+    def bodypaint_registry_path(self, profile: str) -> Path:
+        return self.bodypaint_summary_dir(profile) / "bodypaint_packet_registry.json"
+
+    def bodypaint_communication_signal_path(self, profile: str) -> Path:
+        return self.bodypaint_summary_dir(profile) / "communication_signal.json"
+
+    def bodypaint_workspace_views_dir(self, profile: str) -> Path:
+        return self.bodypaint_profile_dir(profile) / "workspace_views"
+
+    def bodypaint_workspace_view_path(self, profile: str) -> Path:
+        return self.bodypaint_workspace_views_dir(profile) / "bodypaint_pipeline_workspace_view.json"
+
+    def bodypaint_trial_workspace_path(self, profile: str) -> Path:
+        return self.bodypaint_workspace_views_dir(profile) / "pipeline_workspace.toy-yard.bodypaint.example.json"
+
+    def bodypaint_roundtrip_dir(self, profile: str) -> Path:
+        return self.canonical_dir / "bodypaint_roundtrip" / slugify(profile)
+
+    def bodypaint_roundtrip_report_path(self, profile: str) -> Path:
+        return self.bodypaint_roundtrip_dir(profile) / "bodypaint_result_import.json"
 
     def aiue_roundtrip_sample_dir(self, sample_id: str) -> Path:
         return self.aiue_roundtrip_dir / sample_id

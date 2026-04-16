@@ -329,6 +329,126 @@ def build_aiue_motion_export_signal_from_paths(paths: ProjectPaths, profile: str
     )
 
 
+def _bodypaint_packet_presence_check(registry_payload: dict[str, Any]) -> dict[str, Any]:
+    packets = list(registry_payload.get("packets") or [])
+    return {
+        "name": "bodypaint_packet_presence",
+        "status": "pass" if packets else "attention",
+        "details": {
+            "packet_count": len(packets),
+        },
+    }
+
+
+def _bodypaint_input_model_check(registry_payload: dict[str, Any]) -> dict[str, Any]:
+    packets = list(registry_payload.get("packets") or [])
+    ready_count = sum(1 for entry in packets if bool(entry.get("source_model_available")))
+    if not packets:
+        status = "attention"
+    elif ready_count == len(packets):
+        status = "pass"
+    elif ready_count > 0:
+        status = "attention"
+    else:
+        status = "blocker"
+    return {
+        "name": "bodypaint_input_model_resolution",
+        "status": status,
+        "details": {
+            "packet_count": len(packets),
+            "source_model_ready_count": ready_count,
+            "source_model_missing_count": max(len(packets) - ready_count, 0),
+        },
+    }
+
+
+def build_bodypaint_export_signal(
+    *,
+    profile: str,
+    summary_payload: dict[str, Any],
+    registry_payload: dict[str, Any],
+    summary_path: Path,
+    registry_path: Path,
+) -> dict[str, Any]:
+    presence_check = _bodypaint_packet_presence_check(registry_payload)
+    input_check = _bodypaint_input_model_check(registry_payload)
+    ready_count = int(input_check["details"]["source_model_ready_count"])
+    packet_count = int(input_check["details"]["packet_count"])
+
+    if packet_count == 0:
+        status = "attention"
+        handoff_state = "bodypaint_packet_empty"
+        handoff_ready = False
+        problem_owner = "toy-yard"
+        problem_layer = "bodypaint_selection"
+        recommended_next_node = "select_bodypaint_candidate_package"
+        summary = "No BodyPaint packet entries were exported; select a candidate package before invoking BodyPaint."
+    elif ready_count == 0:
+        status = "blocker"
+        handoff_state = "bodypaint_input_missing"
+        handoff_ready = False
+        problem_owner = "toy-yard"
+        problem_layer = "source_model_resolution"
+        recommended_next_node = "repair_bodypaint_source_model_lineage"
+        summary = "BodyPaint packet entries exist, but no source model could be resolved for processor handoff."
+    elif ready_count < packet_count:
+        status = "attention"
+        handoff_state = "bodypaint_packet_partial"
+        handoff_ready = True
+        problem_owner = "toy-yard"
+        problem_layer = "source_model_resolution"
+        recommended_next_node = "bodypaint_process_ready_items"
+        summary = "Some BodyPaint packet entries are ready; process resolved models and repair missing source lineage separately."
+    else:
+        status = "info"
+        handoff_state = "bodypaint_packet_ready"
+        handoff_ready = True
+        problem_owner = "none"
+        problem_layer = "none"
+        recommended_next_node = "bodypaint_convert_analyze_v0_1"
+        summary = "BodyPaint packet is ready with resolved source models and expected processor output paths."
+
+    return {
+        "signal_kind": "toy_yard_communication_signal",
+        "signal_version": COMMUNICATION_SIGNAL_VERSION,
+        "generated_at_utc": now_iso(),
+        "producer": "toy-yard",
+        "counterparty_system": "BodyPaint",
+        "lane": "bodypaint",
+        "profile": profile,
+        "sample_id": str(summary_payload.get("sample_id") or registry_payload.get("sample_id") or ""),
+        "sample_ids": list(summary_payload.get("sample_ids") or registry_payload.get("sample_ids") or []),
+        "status": status,
+        "handoff_state": handoff_state,
+        "handoff_ready": handoff_ready,
+        "handoff_target": "BodyPaint" if handoff_ready else "none",
+        "needs_counterparty_contact": False,
+        "problem_owner": problem_owner,
+        "problem_layer": problem_layer,
+        "recommended_next_node": recommended_next_node,
+        "summary": summary,
+        "checks": [presence_check, input_check],
+        "evidence_paths": {
+            "summary_path": str(summary_path),
+            "registry_path": str(registry_path),
+        },
+    }
+
+
+def build_bodypaint_export_signal_from_paths(paths: ProjectPaths, profile: str) -> dict[str, Any]:
+    summary_path = paths.bodypaint_summary_path(profile)
+    registry_path = paths.bodypaint_registry_path(profile)
+    summary_payload = load_json(summary_path)
+    registry_payload = load_json(registry_path)
+    return build_bodypaint_export_signal(
+        profile=profile,
+        summary_payload=summary_payload,
+        registry_payload=registry_payload,
+        summary_path=summary_path,
+        registry_path=registry_path,
+    )
+
+
 def build_motion_catalog_signal(conn: sqlite3.Connection) -> dict[str, Any]:
     rows = conn.execute(
         """

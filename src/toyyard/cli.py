@@ -11,9 +11,12 @@ from toyyard.aiue_roundtrip import import_aiue_results
 from toyyard.aiue_export import export_aiue_pmx_view
 from toyyard.aiue_motion_export import export_aiue_motion_view
 from toyyard.aiue_motion_roundtrip import import_aiue_motion_results
+from toyyard.bodypaint_export import export_bodypaint_view
+from toyyard.bodypaint_roundtrip import import_bodypaint_results
 from toyyard.communication_signal import (
     build_aiue_motion_export_signal_from_paths,
     build_aiue_pmx_export_signal_from_paths,
+    build_bodypaint_export_signal_from_paths,
     build_motion_catalog_signal,
 )
 from toyyard.constants import DEFAULT_ROOT, ROOT_KINDS, SOURCE_KINDS
@@ -119,6 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     import_audio_session_parser.add_argument("--manifest-path", required=True)
     import_audio_index_packet_parser = import_root_subparsers.add_parser("audio-index-packet", help="Import one SSH-synced audio index packet without copying media data")
     import_audio_index_packet_parser.add_argument("--packet-path", required=True)
+    import_bodypaint_results_parser = import_root_subparsers.add_parser("bodypaint-results", help="Import BodyPaint processor outputs back into toy-yard")
+    import_bodypaint_results_parser.add_argument("--profile", required=True)
+    import_bodypaint_results_parser.add_argument("--package", dest="packages", action="append", default=[])
 
     extract_parser = subparsers.add_parser("extract", help="Run extractors over external media roots")
     extract_subparsers = extract_parser.add_subparsers(dest="extract_command", required=True)
@@ -165,6 +171,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_motion_parser.add_argument("--profile", required=True)
     export_motion_parser.add_argument("--sample", default=None)
     export_motion_parser.add_argument("--package", dest="packages", action="append", default=[])
+    export_bodypaint_parser = export_subparsers.add_parser("bodypaint-view", help="Export a BodyPaint processor/viewer packet")
+    export_bodypaint_parser.add_argument("--profile", required=True)
+    export_bodypaint_parser.add_argument("--sample", default=None)
+    export_bodypaint_parser.add_argument("--package", dest="packages", action="append", default=[])
     export_audio_index_parser = export_subparsers.add_parser("audio-index-packet", help="Export one canonical audio session as an index-only packet for SSH replication")
     export_audio_index_parser.add_argument("--session-id", required=True)
     export_audio_index_parser.add_argument("--node-id", required=True)
@@ -186,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     image_picks_parser.add_argument("--limit", type=int, default=20)
     image_picks_parser.add_argument("--workshop-item-id", default=None)
     communication_signal_parser = report_subparsers.add_parser("communication-signal", help="Emit the latest machine-readable communication signal")
-    communication_signal_parser.add_argument("--lane", choices=("pmx", "motion"), default="pmx")
+    communication_signal_parser.add_argument("--lane", choices=("pmx", "motion", "bodypaint"), default="pmx")
     communication_signal_parser.add_argument("--profile", default=None)
 
     repair_parser = subparsers.add_parser("repair", help="Repair canonical lineage and imported records")
@@ -272,6 +282,29 @@ def cmd_import_audio_index_packet(paths: ProjectPaths, packet_path: str) -> int:
     result = import_audio_index_packet(conn, paths, packet_path=Path(packet_path))
     conn.close()
     print(json.dumps(result, ensure_ascii=True))
+    return 0
+
+
+def cmd_import_bodypaint_results(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = import_bodypaint_results(
+        conn,
+        paths,
+        profile=args.profile,
+        package_refs=args.packages,
+    )
+    conn.close()
+    print_rows(
+        [
+            {
+                "profile": result["profile"],
+                "sample_ids": ",".join(result["sample_ids"]),
+                "packages": len(result["packages"]),
+                "artifacts": result["artifacts"],
+                "report_path": result["report_path"],
+            }
+        ]
+    )
     return 0
 
 
@@ -509,6 +542,39 @@ def cmd_export_aiue_motion_view(paths: ProjectPaths, args: argparse.Namespace) -
     return 0
 
 
+def cmd_export_bodypaint_view(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    sample_mode = bool(args.sample)
+    package_mode = bool(args.packages)
+    if sample_mode == package_mode:
+        raise SystemExit("`toyyard export bodypaint-view` requires exactly one of --sample or --package.")
+    conn = _open_db(paths)
+    result = export_bodypaint_view(
+        conn,
+        paths,
+        profile=args.profile,
+        sample_ref=args.sample,
+        package_refs=args.packages,
+    )
+    print_rows(
+        [
+            {
+                "profile": result["profile"],
+                "sample_id": result["sample_id"],
+                "sample_ids": ",".join(result["sample_ids"]),
+                "packages": len(result["packages"]),
+                "ready_items": result["ready_items"],
+                "export_root": result["export_root"],
+                "summary_path": result["summary_path"],
+                "registry_path": result["registry_path"],
+                "communication_signal_path": result["communication_signal_path"],
+                "workspace_view_path": result["workspace_view_path"],
+            }
+        ]
+    )
+    conn.close()
+    return 0
+
+
 def cmd_export_audio_index_packet(paths: ProjectPaths, args: argparse.Namespace) -> int:
     conn = _open_db(paths)
     result = export_audio_index_packet(
@@ -594,6 +660,13 @@ def cmd_report_communication_signal(paths: ProjectPaths, lane: str, profile: str
         print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
         return 0
 
+    if lane == "bodypaint":
+        if not profile:
+            raise SystemExit("`toyyard report communication-signal --lane bodypaint` requires --profile.")
+        payload = build_bodypaint_export_signal_from_paths(paths, profile)
+        print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
+        return 0
+
     if profile:
         payload = build_aiue_motion_export_signal_from_paths(paths, profile)
         print(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True))
@@ -641,6 +714,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_import_audio_session(paths, args.manifest_path)
     if args.command == "import" and args.import_command == "audio-index-packet":
         return cmd_import_audio_index_packet(paths, args.packet_path)
+    if args.command == "import" and args.import_command == "bodypaint-results":
+        return cmd_import_bodypaint_results(paths, args)
     if args.command == "extract" and args.extract_command == "wallpaper-engine":
         return cmd_extract_wallpaper_engine(paths, args)
     if args.command == "inspect" and args.inspect_command == "package":
@@ -661,6 +736,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_export_aiue_pmx_view(paths, args)
     if args.command == "export" and args.export_command == "aiue-motion-view":
         return cmd_export_aiue_motion_view(paths, args)
+    if args.command == "export" and args.export_command == "bodypaint-view":
+        return cmd_export_bodypaint_view(paths, args)
     if args.command == "export" and args.export_command == "audio-index-packet":
         return cmd_export_audio_index_packet(paths, args)
     if args.command == "report" and args.report_command == "ready":
