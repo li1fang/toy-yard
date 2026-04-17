@@ -203,6 +203,9 @@ class ProjectPaths:
     def bodypaint_registry_path(self, profile: str) -> Path:
         return self.bodypaint_summary_dir(profile) / "bodypaint_packet_registry.json"
 
+    def bodypaint_packet_check_path(self, profile: str) -> Path:
+        return self.bodypaint_summary_dir(profile) / "bodypaint_packet_check.json"
+
     def bodypaint_communication_signal_path(self, profile: str) -> Path:
         return self.bodypaint_summary_dir(profile) / "communication_signal.json"
 
@@ -216,10 +219,19 @@ class ProjectPaths:
         return self.bodypaint_workspace_views_dir(profile) / "pipeline_workspace.toy-yard.bodypaint.example.json"
 
     def bodypaint_roundtrip_dir(self, profile: str) -> Path:
-        return self.canonical_dir / "bodypaint_roundtrip" / slugify(profile)
+        return self.canonical_dir / "bodypaint_roundtrip" / "profiles" / slugify(profile)
 
     def bodypaint_roundtrip_report_path(self, profile: str) -> Path:
         return self.bodypaint_roundtrip_dir(profile) / "bodypaint_result_import.json"
+
+    def bodypaint_roundtrip_sample_dir(self, sample_id: str) -> Path:
+        return self.canonical_dir / "bodypaint_roundtrip" / "samples" / sample_id
+
+    def bodypaint_roundtrip_sample_artifact_dir(self, sample_id: str) -> Path:
+        return self.bodypaint_roundtrip_sample_dir(sample_id) / "sample"
+
+    def bodypaint_roundtrip_package_dir(self, sample_id: str, package_id: str) -> Path:
+        return self.bodypaint_roundtrip_sample_dir(sample_id) / package_id
 
     def aiue_roundtrip_sample_dir(self, sample_id: str) -> Path:
         return self.aiue_roundtrip_dir / sample_id

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from toyyard.bodypaint_packet_check import write_bodypaint_packet_check_report
 from toyyard.communication_signal import build_bodypaint_export_signal
 from toyyard.paths import ProjectPaths
 from toyyard.util import now_iso, normalize_ext, write_json
@@ -18,11 +20,15 @@ from toyyard.warehouse import (
     sample_sources,
 )
 
-
-EXPORT_CONTRACT_VERSION = "toy-yard-bodypaint-0.1"
-EXPORTER_VERSION = "toyyard-bodypaint-lane-v0.1"
+EXPORT_CONTRACT_VERSION = "toy-yard-bodypaint-0.2"
+EXPORTER_VERSION = "toyyard-bodypaint-lane-v0.2"
+EXTERNAL_MODEL_PACKET_VERSION = "toy-yard-external-model-packet-0.1"
 MODEL_EXTENSIONS = {".fbx", ".pmx", ".obj", ".glb", ".gltf"}
 NON_BODYPAINT_BUCKETS = {"audio", "image", "motion", "weapons", "weapon"}
+SOURCE_PROVIDER_NATIVE = "native"
+SOURCE_PROVIDER_AIUE_PMX = "toy_yard_aiue_pmx"
+BODYPAINT_REQUIRED_OUTPUT_KEYS = ("normalized_glb", "painted_glb", "analysis_json")
+BODYPAINT_OPTIONAL_OUTPUT_KEYS = ("engineering_mask", "manual_overrides")
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
@@ -35,6 +41,19 @@ def _ordered_unique(values: list[str]) -> list[str]:
         seen.add(normalized)
         ordered.append(normalized)
     return ordered
+
+
+def _alias_priority(alias: dict[str, Any]) -> tuple[int, int, str, str, str]:
+    external_system = str(alias.get("external_system") or "").strip()
+    alias_key = str(alias.get("alias_key") or "").strip()
+    alias_value = str(alias.get("alias_value") or "").strip()
+    return (
+        1 if external_system == "toy_yard" else 0,
+        1 if alias_key == "package_id" else 0,
+        external_system,
+        alias_key,
+        alias_value,
+    )
 
 
 def _safe_profile_reset(paths: ProjectPaths, profile: str) -> Path:
@@ -96,8 +115,7 @@ def _is_bodypaint_candidate(package: sqlite3.Row) -> bool:
 
 def _candidate_packages_for_sample(conn: sqlite3.Connection, sample: sqlite3.Row) -> list[sqlite3.Row]:
     packages = sample_packages(conn, sample["id"])
-    candidates = [package for package in packages if _is_bodypaint_candidate(package)]
-    return candidates or packages
+    return [package for package in packages if _is_bodypaint_candidate(package)]
 
 
 def _artifact_score(row: sqlite3.Row) -> int:
@@ -212,11 +230,15 @@ def _copy_if_exists(source: Path | None, destination: Path) -> Path | None:
     return destination.resolve()
 
 
-def _relative_to_profile(path: Path, profile_dir: Path) -> str:
+def _relative_to_base(path: Path, base_dir: Path) -> str:
     try:
-        return path.relative_to(profile_dir).as_posix()
+        return path.relative_to(base_dir).as_posix()
     except ValueError:
         return str(path)
+
+
+def _relative_to_profile(path: Path, profile_dir: Path) -> str:
+    return _relative_to_base(path, profile_dir)
 
 
 def _staged_source_filename(source_model: dict[str, Any]) -> str:
@@ -226,6 +248,187 @@ def _staged_source_filename(source_model: dict[str, Any]) -> str:
         return name
     ext = str(source_model.get("format") or ".bin")
     return f"source_model{ext}"
+
+
+def _load_manifest_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Manifest must be a JSON object: {path}")
+    return payload
+
+
+def _aiue_manifest_lookup_keys(payload: dict[str, Any]) -> list[str]:
+    toy_yard = payload.get("toy_yard") or {}
+    aliases = [alias for alias in (toy_yard.get("package_aliases") or []) if isinstance(alias, dict)]
+    aliases.sort(key=_alias_priority, reverse=True)
+    alias_values = [str((alias or {}).get("alias_value") or "") for alias in aliases if isinstance(alias, dict)]
+    alias_triplets = [
+        ":".join(
+            [
+                str((alias or {}).get("external_system") or "").strip(),
+                str((alias or {}).get("alias_key") or "").strip(),
+                str((alias or {}).get("alias_value") or "").strip(),
+            ]
+        )
+        for alias in aliases
+        if isinstance(alias, dict)
+    ]
+    return _ordered_unique(
+        [
+            *alias_triplets,
+            *alias_values,
+            str(toy_yard.get("package_id") or ""),
+            str(payload.get("package_id") or ""),
+        ]
+    )
+
+
+def _build_aiue_pmx_index(paths: ProjectPaths, profile: str) -> dict[str, dict[str, Any]]:
+    profile_dir = paths.aiue_pmx_profile_dir(profile)
+    if not profile_dir.exists():
+        raise ValueError(f"AiUE PMX profile does not exist: {profile_dir}")
+
+    conversion_dir = paths.aiue_pmx_conversion_dir(profile)
+    if not conversion_dir.exists():
+        raise ValueError(f"AiUE PMX conversion directory does not exist: {conversion_dir}")
+
+    index: dict[str, dict[str, Any]] = {}
+    for manifest_path in sorted(conversion_dir.rglob("manifest.json")):
+        payload = _load_manifest_json(manifest_path)
+        keys = _aiue_manifest_lookup_keys(payload)
+        if not keys:
+            continue
+        entry = {
+            "manifest_path": manifest_path.resolve(),
+            "package_dir": manifest_path.parent.resolve(),
+            "payload": payload,
+        }
+        for key in keys:
+            index.setdefault(key, entry)
+    return index
+
+
+def _package_lookup_keys(conn: sqlite3.Connection, package: sqlite3.Row) -> list[str]:
+    rows = [dict(row) for row in package_aliases(conn, package["id"])]
+    rows.sort(key=_alias_priority, reverse=True)
+    alias_values = [str(row["alias_value"] or "") for row in rows]
+    alias_triplets = [
+        ":".join(
+            [
+                str(row["external_system"] or "").strip(),
+                str(row["alias_key"] or "").strip(),
+                str(row["alias_value"] or "").strip(),
+            ]
+        )
+        for row in rows
+    ]
+    return _ordered_unique([*alias_triplets, *alias_values, str(package["canonical_package_id"] or "")])
+
+
+def _resolve_aiue_output_fbx(entry: dict[str, Any]) -> tuple[Path, str]:
+    manifest_path = Path(entry["manifest_path"])
+    package_dir = Path(entry["package_dir"])
+    payload = entry["payload"]
+    export_artifacts = payload.get("export_artifacts") or {}
+    output_value = str(export_artifacts.get("output_fbx") or payload.get("output_fbx") or "").strip()
+    if not output_value:
+        raise ValueError(f"AiUE PMX manifest is missing output_fbx: {manifest_path}")
+
+    output_path = Path(output_value)
+    if not output_path.is_absolute():
+        output_path = package_dir / output_path
+    output_path = output_path.resolve()
+    if output_path.suffix.lower() != ".fbx":
+        raise ValueError(f"AiUE PMX bridge requires an FBX output: {manifest_path}")
+    if not output_path.exists() or not output_path.is_file():
+        raise FileNotFoundError(f"AiUE PMX staged FBX does not exist: {output_path}")
+    return output_path, output_value
+
+
+def _relative_copy_target(source: Path, root: Path) -> Path:
+    try:
+        return source.resolve().relative_to(root.resolve())
+    except ValueError:
+        return Path(source.name)
+
+
+def _prepare_aiue_pmx_source_model(
+    conn: sqlite3.Connection,
+    paths: ProjectPaths,
+    *,
+    package: sqlite3.Row,
+    source_dir: Path,
+    aiue_pmx_profile: str,
+    aiue_index: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    lookup_keys = _package_lookup_keys(conn, package)
+    matched_entry = None
+    matched_key = ""
+    for key in lookup_keys:
+        if key in aiue_index:
+            matched_entry = aiue_index[key]
+            matched_key = key
+            break
+    if matched_entry is None:
+        raise ValueError(
+            "AiUE PMX manifest not found for BodyPaint package "
+            f"{package['canonical_package_id']} in profile {aiue_pmx_profile}"
+        )
+
+    upstream_fbx, _ = _resolve_aiue_output_fbx(matched_entry)
+    upstream_package_dir = Path(matched_entry["package_dir"]).resolve()
+    upstream_manifest_path = Path(matched_entry["manifest_path"]).resolve()
+    staged_root = (source_dir / "upstream_aiue_pmx").resolve()
+    shutil.copytree(upstream_package_dir, staged_root)
+    staged_fbx = staged_root / _relative_copy_target(upstream_fbx, upstream_package_dir)
+    if not staged_fbx.exists() or not staged_fbx.is_file():
+        raise FileNotFoundError(f"AiUE PMX staged FBX missing after copy: {staged_fbx}")
+
+    return {
+        "provider": SOURCE_PROVIDER_AIUE_PMX,
+        "upstream_profile": aiue_pmx_profile,
+        "upstream_manifest_path": str(upstream_manifest_path),
+        "matched_key": matched_key,
+        "raw_path": str(upstream_fbx),
+        "staged_path": staged_fbx,
+        "format": ".fbx",
+        "artifact_kind": "output_fbx",
+        "source_kind": "artifact",
+        "owner_type": "package",
+        "owner_id": package["id"],
+        "stage": "aiue_pmx",
+        "available": True,
+    }
+
+
+def _prepare_native_source_model(
+    conn: sqlite3.Connection,
+    *,
+    sample: sqlite3.Row,
+    package: sqlite3.Row,
+    source_dir: Path,
+) -> dict[str, Any]:
+    source_model = _select_source_model(conn, sample, package)
+    raw_source_path = str(source_model.get("raw_path") or "")
+    staged_source = _copy_if_exists(
+        Path(raw_source_path) if raw_source_path else None,
+        source_dir / _staged_source_filename(source_model),
+    )
+    return {
+        "provider": SOURCE_PROVIDER_NATIVE,
+        "upstream_profile": "",
+        "upstream_manifest_path": "",
+        "matched_key": "",
+        "raw_path": raw_source_path,
+        "staged_path": staged_source,
+        "format": source_model.get("format") or normalize_ext(raw_source_path),
+        "artifact_kind": source_model.get("artifact_kind") or "",
+        "source_kind": source_model.get("source_kind") or "",
+        "owner_type": source_model.get("owner_type") or "",
+        "owner_id": source_model.get("owner_id") or "",
+        "stage": source_model.get("stage") or "",
+        "available": staged_source is not None,
+    }
 
 
 def _single_sample_owner(conn: sqlite3.Connection, sample_ids: list[str]) -> sqlite3.Row | None:
@@ -244,6 +447,7 @@ def export_bodypaint_view(
     profile: str,
     sample_ref: str | None = None,
     package_refs: list[str] | None = None,
+    aiue_pmx_profile: str | None = None,
 ) -> dict[str, Any]:
     normalized_package_refs = [str(item or "").strip() for item in (package_refs or []) if str(item or "").strip()]
     if sample_ref and normalized_package_refs:
@@ -260,6 +464,8 @@ def export_bodypaint_view(
             package = _resolve_package(conn, package_ref)
             if package is None:
                 raise ValueError(f"Unknown package: {package_ref}")
+            if not _is_bodypaint_candidate(package):
+                raise ValueError(f"Package is not a BodyPaint candidate: {package_ref}")
             sample = conn.execute("SELECT * FROM samples WHERE id = ?", (package["sample_id"],)).fetchone()
             if sample is None:
                 raise ValueError(f"Package has no sample owner: {package_ref}")
@@ -271,6 +477,8 @@ def export_bodypaint_view(
         if sample is None:
             raise ValueError(f"Unknown sample: {sample_ref}")
         selections.extend((sample, package) for package in _candidate_packages_for_sample(conn, sample))
+    if not selections:
+        raise ValueError("BodyPaint export requires at least one BodyPaint candidate package.")
 
     profile_dir = _safe_profile_reset(paths, profile)
     assets_dir = paths.bodypaint_assets_dir(profile)
@@ -279,6 +487,15 @@ def export_bodypaint_view(
     assets_dir.mkdir(parents=True, exist_ok=True)
     summary_dir.mkdir(parents=True, exist_ok=True)
     workspace_views_dir.mkdir(parents=True, exist_ok=True)
+    aiue_index = _build_aiue_pmx_index(paths, aiue_pmx_profile) if aiue_pmx_profile else {}
+    consumer_packet = {
+        "packet_kind": "external_model_packet",
+        "packet_version": EXTERNAL_MODEL_PACKET_VERSION,
+        "consumer": "bodypaint",
+        "required_outputs": list(BODYPAINT_REQUIRED_OUTPUT_KEYS),
+        "optional_outputs": list(BODYPAINT_OPTIONAL_OUTPUT_KEYS),
+        "source_providers": [SOURCE_PROVIDER_NATIVE, SOURCE_PROVIDER_AIUE_PMX],
+    }
 
     summary_items: list[dict[str, Any]] = []
     registry_packets: list[dict[str, Any]] = []
@@ -289,18 +506,32 @@ def export_bodypaint_view(
         package_dir = paths.bodypaint_asset_dir(profile, package["canonical_package_id"])
         source_dir = package_dir / "source"
         outputs_dir = package_dir / "outputs"
+        source_dir.mkdir(parents=True, exist_ok=True)
         outputs_dir.mkdir(parents=True, exist_ok=True)
 
         sample_metadata = json_loads(sample["metadata_json"])
         package_metadata = json_loads(package["metadata_json"])
         source_refs = _source_references(conn, sample["id"])
-        source_model = _select_source_model(conn, sample, package)
-        raw_source_path = str(source_model.get("raw_path") or "")
-        staged_source = _copy_if_exists(
-            Path(raw_source_path) if raw_source_path else None,
-            source_dir / _staged_source_filename(source_model),
+        resolved_source = (
+            _prepare_aiue_pmx_source_model(
+                conn,
+                paths,
+                package=package,
+                source_dir=source_dir,
+                aiue_pmx_profile=aiue_pmx_profile,
+                aiue_index=aiue_index,
+            )
+            if aiue_pmx_profile
+            else _prepare_native_source_model(
+                conn,
+                sample=sample,
+                package=package,
+                source_dir=source_dir,
+            )
         )
-        source_model_available = staged_source is not None
+        raw_source_path = str(resolved_source.get("raw_path") or "")
+        staged_source = resolved_source.get("staged_path")
+        source_model_available = bool(resolved_source.get("available"))
 
         expected_outputs = {
             "normalized_glb": "outputs/model.glb",
@@ -321,23 +552,28 @@ def export_bodypaint_view(
             "package_role": package["package_role"],
             "content_bucket": package["content_bucket"],
             "contract_type": package["contract_type"],
+            "consumer_packet": consumer_packet,
             "source_model": {
                 "available": source_model_available,
                 "raw_path": raw_source_path,
-                "staged_path": _relative_to_profile(staged_source, profile_dir) if staged_source else "",
-                "format": source_model.get("format") or normalize_ext(raw_source_path),
-                "artifact_kind": source_model.get("artifact_kind") or "",
-                "source_kind": source_model.get("source_kind") or "",
-                "owner_type": source_model.get("owner_type") or "",
-                "owner_id": source_model.get("owner_id") or "",
-                "stage": source_model.get("stage") or "",
+                "staged_path": _relative_to_base(staged_source, package_dir) if staged_source else "",
+                "format": resolved_source.get("format") or normalize_ext(raw_source_path),
+                "artifact_kind": resolved_source.get("artifact_kind") or "",
+                "source_kind": resolved_source.get("source_kind") or "",
+                "owner_type": resolved_source.get("owner_type") or "",
+                "owner_id": resolved_source.get("owner_id") or "",
+                "stage": resolved_source.get("stage") or "",
+                "provider": resolved_source.get("provider") or SOURCE_PROVIDER_NATIVE,
+                "upstream_profile": resolved_source.get("upstream_profile") or "",
+                "upstream_manifest_path": resolved_source.get("upstream_manifest_path") or "",
             },
             "expected_outputs": expected_outputs,
             "viewer": {
                 "preferred_model": expected_outputs["painted_glb"],
-                "fallback_model": _relative_to_profile(staged_source, profile_dir) if staged_source else raw_source_path,
+                "fallback_model": _relative_to_base(staged_source, package_dir) if staged_source else raw_source_path,
                 "analysis": expected_outputs["analysis_json"],
                 "engineering_mask": expected_outputs["engineering_mask"],
+                "override_path": expected_outputs["manual_overrides"],
             },
             "source_lineage": {
                 "source_references": source_refs,
@@ -387,7 +623,10 @@ def export_bodypaint_view(
             "manifest_path": str(manifest_path.resolve()),
             "source_model_available": source_model_available,
             "source_model_path": str(staged_source) if staged_source else raw_source_path,
-            "source_model_format": source_model.get("format") or normalize_ext(raw_source_path),
+            "source_model_format": resolved_source.get("format") or normalize_ext(raw_source_path),
+            "source_provider": resolved_source.get("provider") or SOURCE_PROVIDER_NATIVE,
+            "upstream_profile": resolved_source.get("upstream_profile") or "",
+            "upstream_manifest_path": resolved_source.get("upstream_manifest_path") or "",
             "package_role": package["package_role"],
             "content_bucket": package["content_bucket"],
             "contract_type": package["contract_type"],
@@ -416,14 +655,15 @@ def export_bodypaint_view(
         "export_contract_version": EXPORT_CONTRACT_VERSION,
         "exporter_version": EXPORTER_VERSION,
         "source": "toy-yard export",
-        "profile": profile,
-        "sample_id": primary_sample_id,
-        "sample_ids": sample_ids,
-        "items": summary_items,
-        "counts": {
-            "requested_items": len(summary_items),
-            "ready_items": ready_items,
-            "missing_source_model_items": len(summary_items) - ready_items,
+            "profile": profile,
+            "sample_id": primary_sample_id,
+            "sample_ids": sample_ids,
+            "consumer_packet": consumer_packet,
+            "items": summary_items,
+            "counts": {
+                "requested_items": len(summary_items),
+                "ready_items": ready_items,
+                "missing_source_model_items": len(summary_items) - ready_items,
             "distinct_sample_count": len(sample_ids),
         },
     }
@@ -435,14 +675,15 @@ def export_bodypaint_view(
         "export_contract_version": EXPORT_CONTRACT_VERSION,
         "exporter_version": EXPORTER_VERSION,
         "source": "toy-yard export",
-        "profile": profile,
-        "sample_id": primary_sample_id,
-        "sample_ids": sample_ids,
-        "packets": registry_packets,
-        "package_index": {
-            item["package_id"]: {
-                "manifest_path": item["manifest_path"],
-                "manifest_relpath": item["manifest_relpath"],
+            "profile": profile,
+            "sample_id": primary_sample_id,
+            "sample_ids": sample_ids,
+            "consumer_packet": consumer_packet,
+            "packets": registry_packets,
+            "package_index": {
+                item["package_id"]: {
+                    "manifest_path": item["manifest_path"],
+                    "manifest_relpath": item["manifest_relpath"],
                 "source_model_available": item["source_model_available"],
                 "source_model_relpath": item["source_model_relpath"],
                 "expected_outputs": item["expected_outputs"],
@@ -458,12 +699,21 @@ def export_bodypaint_view(
     registry_path = paths.bodypaint_registry_path(profile)
     write_json(registry_path, registry_payload)
 
+    packet_check_path = paths.bodypaint_packet_check_path(profile)
+    packet_check_payload = write_bodypaint_packet_check_report(
+        registry_payload=registry_payload,
+        export_root=profile_dir.resolve(),
+        output_path=packet_check_path,
+    )
+
     communication_signal_payload = build_bodypaint_export_signal(
         profile=profile,
         summary_payload=summary_payload,
         registry_payload=registry_payload,
+        packet_check_payload=packet_check_payload,
         summary_path=summary_path,
         registry_path=registry_path,
+        packet_check_path=packet_check_path,
     )
     communication_signal_path = paths.bodypaint_communication_signal_path(profile)
     write_json(communication_signal_path, communication_signal_payload)
@@ -496,6 +746,17 @@ def export_bodypaint_view(
             owner_type="sample",
             owner_id=single_owner["id"],
             stage="export",
+            artifact_kind="bodypaint_packet_check",
+            path=str(packet_check_path.resolve()),
+            format=".json",
+            status=packet_check_payload["status"],
+            metadata={"profile": profile},
+        )
+        ensure_artifact(
+            conn,
+            owner_type="sample",
+            owner_id=single_owner["id"],
+            stage="export",
             artifact_kind="communication_signal",
             path=str(communication_signal_path.resolve()),
             format=".json",
@@ -512,10 +773,12 @@ def export_bodypaint_view(
         "toy_yard_bodypaint_view_root": str(profile_dir.resolve()),
         "summary_path": str(summary_path.resolve()),
         "registry_path": str(registry_path.resolve()),
+        "packet_check_path": str(packet_check_path.resolve()),
         "communication_signal_path": str(communication_signal_path.resolve()),
         "sample_id": primary_sample_id,
         "sample_ids": sample_ids,
         "package_ids": exported_packages,
+        "consumer_packet": consumer_packet,
     }
     workspace_view_path = paths.bodypaint_workspace_view_path(profile)
     write_json(workspace_view_path, workspace_view_payload)
@@ -528,6 +791,7 @@ def export_bodypaint_view(
             "bodypaint_repo_root": r"C:\Projects\BodyPaint",
             "bodypaint_processor_output_root": str(assets_dir.resolve()),
         },
+        "consumer_packet": consumer_packet,
         "processor": {
             "expected_contract": EXPORT_CONTRACT_VERSION,
             "normalized_format": "glb",
@@ -548,6 +812,7 @@ def export_bodypaint_view(
         "export_root": str(profile_dir.resolve()),
         "summary_path": str(summary_path.resolve()),
         "registry_path": str(registry_path.resolve()),
+        "packet_check_path": str(packet_check_path.resolve()),
         "communication_signal_path": str(communication_signal_path.resolve()),
         "workspace_view_path": str(workspace_view_path.resolve()),
         "trial_workspace_path": str(trial_workspace_path.resolve()),

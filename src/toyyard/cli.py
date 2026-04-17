@@ -175,6 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_bodypaint_parser.add_argument("--profile", required=True)
     export_bodypaint_parser.add_argument("--sample", default=None)
     export_bodypaint_parser.add_argument("--package", dest="packages", action="append", default=[])
+    export_bodypaint_parser.add_argument("--aiue-pmx-profile", default=None)
     export_audio_index_parser = export_subparsers.add_parser("audio-index-packet", help="Export one canonical audio session as an index-only packet for SSH replication")
     export_audio_index_parser.add_argument("--session-id", required=True)
     export_audio_index_parser.add_argument("--node-id", required=True)
@@ -554,6 +555,7 @@ def cmd_export_bodypaint_view(paths: ProjectPaths, args: argparse.Namespace) -> 
         profile=args.profile,
         sample_ref=args.sample,
         package_refs=args.packages,
+        aiue_pmx_profile=args.aiue_pmx_profile,
     )
     print_rows(
         [
@@ -566,6 +568,7 @@ def cmd_export_bodypaint_view(paths: ProjectPaths, args: argparse.Namespace) -> 
                 "export_root": result["export_root"],
                 "summary_path": result["summary_path"],
                 "registry_path": result["registry_path"],
+                "packet_check_path": result["packet_check_path"],
                 "communication_signal_path": result["communication_signal_path"],
                 "workspace_view_path": result["workspace_view_path"],
             }

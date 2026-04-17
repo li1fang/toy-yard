@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,7 @@ def _record_output_artifact(
     package: sqlite3.Row,
     key: str,
     path: Path,
+    source_path: Path,
     profile: str,
     sample_id: str,
 ) -> None:
@@ -91,8 +93,25 @@ def _record_output_artifact(
         path=str(path),
         format=normalize_ext(path),
         status="imported",
-        metadata={"profile": profile, "sample_id": sample_id, "package_id": package["canonical_package_id"]},
+        metadata={
+            "profile": profile,
+            "sample_id": sample_id,
+            "package_id": package["canonical_package_id"],
+            "source_path": str(source_path.resolve()),
+            "stable_path": str(path.resolve()),
+        },
     )
+
+
+def _stable_output_path(paths: ProjectPaths, *, sample_id: str, package_id: str, artifact_kind: str, source_path: Path) -> Path:
+    ext = source_path.suffix.lower()
+    return paths.bodypaint_roundtrip_package_dir(sample_id, package_id) / f"{artifact_kind}{ext}"
+
+
+def _copy_to_stable_evidence(source_path: Path, destination_path: Path) -> Path:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination_path)
+    return destination_path.resolve()
 
 
 def import_bodypaint_results(
@@ -123,6 +142,7 @@ def import_bodypaint_results(
         package = _package(conn, package_id)
         sample = _sample(conn, package["sample_id"])
         sample_id = str(packet.get("sample_id") or (sample["canonical_sample_id"] if sample else ""))
+        stable_sample_id = sample_id or (sample["canonical_sample_id"] if sample else f"sample-{package['sample_id']}")
         manifest_path = _packet_manifest_path(profile_dir, packet)
         if not manifest_path.exists():
             raise FileNotFoundError(f"BodyPaint manifest not found: {manifest_path}")
@@ -134,36 +154,68 @@ def import_bodypaint_results(
                 raise FileNotFoundError(
                     f"bodypaint_required_output_missing:{package_id}:{output_key}:{output_path}"
                 )
+            stable_path = _copy_to_stable_evidence(
+                output_path,
+                _stable_output_path(
+                    paths,
+                    sample_id=stable_sample_id,
+                    package_id=package_id,
+                    artifact_kind=artifact_kind,
+                    source_path=output_path,
+                ),
+            )
             _record_output_artifact(
                 conn,
                 package=package,
                 key=artifact_kind,
-                path=output_path,
+                path=stable_path,
+                source_path=output_path,
                 profile=profile,
-                sample_id=sample_id,
+                sample_id=stable_sample_id,
             )
             imported_artifacts.append(
-                {"package_id": package_id, "artifact_kind": artifact_kind, "path": str(output_path)}
+                {
+                    "package_id": package_id,
+                    "artifact_kind": artifact_kind,
+                    "source_path": str(output_path.resolve()),
+                    "stable_path": str(stable_path),
+                }
             )
 
         for output_key, artifact_kind in OPTIONAL_OUTPUTS.items():
             output_path = _output_path(manifest_path, manifest_payload, output_key)
             if not output_path.exists():
                 continue
+            stable_path = _copy_to_stable_evidence(
+                output_path,
+                _stable_output_path(
+                    paths,
+                    sample_id=stable_sample_id,
+                    package_id=package_id,
+                    artifact_kind=artifact_kind,
+                    source_path=output_path,
+                ),
+            )
             _record_output_artifact(
                 conn,
                 package=package,
                 key=artifact_kind,
-                path=output_path,
+                path=stable_path,
+                source_path=output_path,
                 profile=profile,
-                sample_id=sample_id,
+                sample_id=stable_sample_id,
             )
             imported_artifacts.append(
-                {"package_id": package_id, "artifact_kind": artifact_kind, "path": str(output_path)}
+                {
+                    "package_id": package_id,
+                    "artifact_kind": artifact_kind,
+                    "source_path": str(output_path.resolve()),
+                    "stable_path": str(stable_path),
+                }
             )
 
-        if sample_id:
-            sample_ids.append(sample_id)
+        if stable_sample_id:
+            sample_ids.append(stable_sample_id)
         package_ids.append(package_id)
 
     unique_sample_ids = sorted(set(sample_ids))

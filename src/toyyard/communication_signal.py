@@ -362,16 +362,43 @@ def _bodypaint_input_model_check(registry_payload: dict[str, Any]) -> dict[str, 
     }
 
 
+def _bodypaint_packet_contract_check(packet_check_payload: dict[str, Any]) -> dict[str, Any]:
+    counts = packet_check_payload.get("counts") or {}
+    packet_count = int(counts.get("packet_count", 0) or 0)
+    fail_count = int(counts.get("fail_count", 0) or 0)
+    attention_count = int(counts.get("attention_count", 0) or 0)
+    if packet_count == 0:
+        status = "attention"
+    elif fail_count > 0:
+        status = "blocker"
+    elif attention_count > 0:
+        status = "attention"
+    else:
+        status = "pass"
+    return {
+        "name": "bodypaint_packet_contract",
+        "status": status,
+        "details": {
+            "packet_count": packet_count,
+            "fail_count": fail_count,
+            "attention_count": attention_count,
+        },
+    }
+
+
 def build_bodypaint_export_signal(
     *,
     profile: str,
     summary_payload: dict[str, Any],
     registry_payload: dict[str, Any],
+    packet_check_payload: dict[str, Any],
     summary_path: Path,
     registry_path: Path,
+    packet_check_path: Path,
 ) -> dict[str, Any]:
     presence_check = _bodypaint_packet_presence_check(registry_payload)
     input_check = _bodypaint_input_model_check(registry_payload)
+    packet_contract_check = _bodypaint_packet_contract_check(packet_check_payload)
     ready_count = int(input_check["details"]["source_model_ready_count"])
     packet_count = int(input_check["details"]["packet_count"])
 
@@ -383,6 +410,14 @@ def build_bodypaint_export_signal(
         problem_layer = "bodypaint_selection"
         recommended_next_node = "select_bodypaint_candidate_package"
         summary = "No BodyPaint packet entries were exported; select a candidate package before invoking BodyPaint."
+    elif packet_contract_check["status"] == "blocker":
+        status = "blocker"
+        handoff_state = "bodypaint_packet_invalid"
+        handoff_ready = False
+        problem_owner = "toy-yard"
+        problem_layer = "export_contract"
+        recommended_next_node = "repair_bodypaint_packet_contract"
+        summary = "BodyPaint packet files were exported, but the packet contract is internally invalid and should be repaired before handoff."
     elif ready_count == 0:
         status = "blocker"
         handoff_state = "bodypaint_input_missing"
@@ -427,10 +462,11 @@ def build_bodypaint_export_signal(
         "problem_layer": problem_layer,
         "recommended_next_node": recommended_next_node,
         "summary": summary,
-        "checks": [presence_check, input_check],
+        "checks": [presence_check, input_check, packet_contract_check],
         "evidence_paths": {
             "summary_path": str(summary_path),
             "registry_path": str(registry_path),
+            "packet_check_path": str(packet_check_path),
         },
     }
 
@@ -438,14 +474,22 @@ def build_bodypaint_export_signal(
 def build_bodypaint_export_signal_from_paths(paths: ProjectPaths, profile: str) -> dict[str, Any]:
     summary_path = paths.bodypaint_summary_path(profile)
     registry_path = paths.bodypaint_registry_path(profile)
+    packet_check_path = paths.bodypaint_packet_check_path(profile)
     summary_payload = load_json(summary_path)
     registry_payload = load_json(registry_path)
+    packet_check_payload = load_json(packet_check_path) if packet_check_path.exists() else {
+        "status": "attention",
+        "counts": {"packet_count": int((registry_payload.get("counts") or {}).get("packets", 0) or 0)},
+        "items": [],
+    }
     return build_bodypaint_export_signal(
         profile=profile,
         summary_payload=summary_payload,
         registry_payload=registry_payload,
+        packet_check_payload=packet_check_payload,
         summary_path=summary_path,
         registry_path=registry_path,
+        packet_check_path=packet_check_path,
     )
 
 

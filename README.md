@@ -74,6 +74,19 @@ toyyard.py        local CLI launcher
 
 Live warehouse zones such as `00_inbox/`, `01_intake/`, `03_workbench/`, `04_registry/`, and `05_publish/` are local runtime state and are ignored in git.
 
+## New Consumers
+
+New downstream consumers should not begin by directly editing `toy-yard`.
+
+The default gate is now:
+
+1. read [CONSUMER_RUNBOOK.md](CONSUMER_RUNBOOK.md)
+2. fill in [docs/consumer_request_template.md](docs/consumer_request_template.md)
+3. get warehouse-side review
+4. only then propose packet or seam changes
+
+This keeps `toy-yard` focused on warehouse truth and packet contracts, while consumer projects own their own runtime logic and project-specific runbooks.
+
 ## Quick Start
 
 ### 1. Install
