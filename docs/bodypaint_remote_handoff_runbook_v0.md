@@ -45,6 +45,7 @@ toyyard remote handoff bodypaint-view \
    - `summary/bodypaint_suite_summary.json`
    - `summary/bodypaint_packet_registry.json`
    - `summary/bodypaint_packet_check.json`
+   - `summary/bodypaint_packet_identity.json`
    - `summary/communication_signal.json`
 8. computes a staged directory tree manifest after transfer
 9. compares source and staged tree hashes
@@ -107,7 +108,13 @@ The target consumer-visible directory is only updated after staged shape and has
 
 Repeated runs are idempotent at the transfer level: when the final target directory already exists, passes packet-shape verification, and has the same stable packet fingerprint as the source, the operator returns `transfer.skipped_existing_verified = true` and does not re-run `scp`.
 
-For BodyPaint v0, the stable packet fingerprint ignores approved volatile JSON keys:
+For BodyPaint v0, the stable packet fingerprint now lives in packet-native sidecar metadata:
+
+- `summary/bodypaint_packet_identity.json`
+
+The operator now prefers that sidecar when present and only falls back to local recomputation for older packets.
+
+For the current BodyPaint packet identity, the stable packet fingerprint ignores approved volatile JSON keys:
 
 - `generated_at_utc`
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -23,12 +24,15 @@ from toyyard.warehouse import (
 EXPORT_CONTRACT_VERSION = "toy-yard-bodypaint-0.2"
 EXPORTER_VERSION = "toyyard-bodypaint-lane-v0.2"
 EXTERNAL_MODEL_PACKET_VERSION = "toy-yard-external-model-packet-0.1"
+PACKET_IDENTITY_VERSION = "toy-yard-bodypaint-packet-identity-0.1"
 MODEL_EXTENSIONS = {".fbx", ".pmx", ".obj", ".glb", ".gltf"}
 NON_BODYPAINT_BUCKETS = {"audio", "image", "motion", "weapons", "weapon"}
 SOURCE_PROVIDER_NATIVE = "native"
 SOURCE_PROVIDER_AIUE_PMX = "toy_yard_aiue_pmx"
 BODYPAINT_REQUIRED_OUTPUT_KEYS = ("normalized_glb", "painted_glb", "analysis_json")
 BODYPAINT_OPTIONAL_OUTPUT_KEYS = ("engineering_mask", "manual_overrides")
+BODYPAINT_PACKET_IDENTITY_EXCLUDED_RELPATHS = {"summary/bodypaint_packet_identity.json"}
+BODYPAINT_PACKET_IDENTITY_VOLATILE_KEYS = {"generated_at_utc"}
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
@@ -255,6 +259,70 @@ def _load_manifest_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"Manifest must be a JSON object: {path}")
     return payload
+
+
+def _normalize_identity_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _normalize_identity_json(item)
+            for key, item in sorted(value.items())
+            if key not in BODYPAINT_PACKET_IDENTITY_VOLATILE_KEYS
+        }
+    if isinstance(value, list):
+        return [_normalize_identity_json(item) for item in value]
+    return value
+
+
+def _compute_bodypaint_packet_identity(*, profile_dir: Path, profile: str) -> dict[str, Any]:
+    files: list[dict[str, Any]] = []
+    total_bytes = 0
+    for path in sorted(item for item in profile_dir.rglob("*") if item.is_file()):
+        relpath = path.relative_to(profile_dir).as_posix()
+        if relpath in BODYPAINT_PACKET_IDENTITY_EXCLUDED_RELPATHS:
+            continue
+        if path.suffix.lower() == ".json":
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+            normalized = _normalize_identity_json(payload)
+            material = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            files.append(
+                {
+                    "path": relpath,
+                    "kind": "json",
+                    "size_bytes": path.stat().st_size,
+                    "fingerprint_sha256": hashlib.sha256(material).hexdigest(),
+                }
+            )
+        else:
+            digest = hashlib.sha256()
+            size_bytes = 0
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    size_bytes += len(chunk)
+                    digest.update(chunk)
+            files.append(
+                {
+                    "path": relpath,
+                    "kind": "binary",
+                    "size_bytes": size_bytes,
+                    "fingerprint_sha256": digest.hexdigest(),
+                }
+            )
+        total_bytes += int(files[-1]["size_bytes"])
+    material = json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return {
+        "generated_at_utc": now_iso(),
+        "identity_kind": "bodypaint_packet_identity",
+        "identity_version": PACKET_IDENTITY_VERSION,
+        "profile": profile,
+        "export_contract_version": EXPORT_CONTRACT_VERSION,
+        "exporter_version": EXPORTER_VERSION,
+        "stable_fingerprint": hashlib.sha256(material).hexdigest(),
+        "volatile_keys_ignored": sorted(BODYPAINT_PACKET_IDENTITY_VOLATILE_KEYS),
+        "excluded_files": sorted(BODYPAINT_PACKET_IDENTITY_EXCLUDED_RELPATHS),
+        "file_count": len(files),
+        "total_bytes": total_bytes,
+        "files": files,
+    }
 
 
 def _aiue_manifest_lookup_keys(payload: dict[str, Any]) -> list[str]:
@@ -717,6 +785,9 @@ def export_bodypaint_view(
     )
     communication_signal_path = paths.bodypaint_communication_signal_path(profile)
     write_json(communication_signal_path, communication_signal_payload)
+    packet_identity_path = paths.bodypaint_packet_identity_path(profile)
+    packet_identity_payload = _compute_bodypaint_packet_identity(profile_dir=profile_dir.resolve(), profile=profile)
+    write_json(packet_identity_path, packet_identity_payload)
 
     if single_owner is not None:
         ensure_artifact(
@@ -763,6 +834,21 @@ def export_bodypaint_view(
             status=communication_signal_payload["status"],
             metadata={"profile": profile, "lane": "bodypaint"},
         )
+        ensure_artifact(
+            conn,
+            owner_type="sample",
+            owner_id=single_owner["id"],
+            stage="export",
+            artifact_kind="bodypaint_packet_identity",
+            path=str(packet_identity_path.resolve()),
+            format=".json",
+            status="exported",
+            metadata={
+                "profile": profile,
+                "lane": "bodypaint",
+                "stable_fingerprint": packet_identity_payload["stable_fingerprint"],
+            },
+        )
 
     workspace_view_payload = {
         "version": "0.1",
@@ -774,6 +860,7 @@ def export_bodypaint_view(
         "summary_path": str(summary_path.resolve()),
         "registry_path": str(registry_path.resolve()),
         "packet_check_path": str(packet_check_path.resolve()),
+        "packet_identity_path": str(packet_identity_path.resolve()),
         "communication_signal_path": str(communication_signal_path.resolve()),
         "sample_id": primary_sample_id,
         "sample_ids": sample_ids,
@@ -813,6 +900,7 @@ def export_bodypaint_view(
         "summary_path": str(summary_path.resolve()),
         "registry_path": str(registry_path.resolve()),
         "packet_check_path": str(packet_check_path.resolve()),
+        "packet_identity_path": str(packet_identity_path.resolve()),
         "communication_signal_path": str(communication_signal_path.resolve()),
         "workspace_view_path": str(workspace_view_path.resolve()),
         "trial_workspace_path": str(trial_workspace_path.resolve()),

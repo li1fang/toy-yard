@@ -222,6 +222,9 @@ class ProjectPaths:
     def bodypaint_packet_check_path(self, profile: str) -> Path:
         return self.bodypaint_summary_dir(profile) / "bodypaint_packet_check.json"
 
+    def bodypaint_packet_identity_path(self, profile: str) -> Path:
+        return self.bodypaint_summary_dir(profile) / "bodypaint_packet_identity.json"
+
     def bodypaint_communication_signal_path(self, profile: str) -> Path:
         return self.bodypaint_summary_dir(profile) / "communication_signal.json"
 

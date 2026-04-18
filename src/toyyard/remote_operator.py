@@ -546,6 +546,7 @@ paths = {{
     'summary_path': summary_dir / 'bodypaint_suite_summary.json',
     'registry_path': summary_dir / 'bodypaint_packet_registry.json',
     'packet_check_path': summary_dir / 'bodypaint_packet_check.json',
+    'packet_identity_path': summary_dir / 'bodypaint_packet_identity.json',
     'communication_signal_path': summary_dir / 'communication_signal.json',
 }}
 payload = {{
@@ -614,6 +615,7 @@ def _bodypaint_packet_fingerprint_python_code(root_path: str) -> str:
 import hashlib, json, pathlib
 
 VOLATILE_KEYS = {{'generated_at_utc'}}
+IDENTITY_REL_PATH = 'summary/bodypaint_packet_identity.json'
 
 def normalize_json(value):
     if isinstance(value, dict):
@@ -627,10 +629,29 @@ def normalize_json(value):
     return value
 
 root = pathlib.Path({root_path!r})
+identity_path = root / 'summary' / 'bodypaint_packet_identity.json'
+if identity_path.exists():
+    identity_payload = json.loads(identity_path.read_text(encoding='utf-8-sig'))
+    payload = {{
+        'root': str(root),
+        'exists': root.exists(),
+        'file_count': int(identity_payload.get('file_count') or 0),
+        'stable_fingerprint': str(identity_payload.get('stable_fingerprint') or ''),
+        'volatile_keys_ignored': identity_payload.get('volatile_keys_ignored') or sorted(VOLATILE_KEYS),
+        'excluded_files': identity_payload.get('excluded_files') or [IDENTITY_REL_PATH],
+        'files': identity_payload.get('files') or [],
+        'source': 'packet_identity',
+        'identity_path': str(identity_path),
+        'identity_payload': identity_payload,
+    }}
+    print(json.dumps(payload, ensure_ascii=True))
+    raise SystemExit(0)
 files = []
 if root.exists():
     for path in sorted(p for p in root.rglob('*') if p.is_file()):
         rel = path.relative_to(root).as_posix()
+        if rel == IDENTITY_REL_PATH:
+            continue
         if path.suffix.lower() == '.json':
             payload = json.loads(path.read_text(encoding='utf-8-sig'))
             normalized = normalize_json(payload)
@@ -657,7 +678,10 @@ payload = {{
     'file_count': len(files),
     'stable_fingerprint': hashlib.sha256(material).hexdigest(),
     'volatile_keys_ignored': sorted(VOLATILE_KEYS),
+    'excluded_files': [IDENTITY_REL_PATH],
     'files': files,
+    'source': 'computed_fallback',
+    'identity_path': '',
 }}
 print(json.dumps(payload, ensure_ascii=True))
 """.strip()

@@ -172,10 +172,12 @@ class BodyPaintExportTests(unittest.TestCase):
         summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
         registry = json.loads(Path(result["registry_path"]).read_text(encoding="utf-8"))
         packet_check = json.loads(Path(result["packet_check_path"]).read_text(encoding="utf-8"))
+        packet_identity = json.loads(Path(result["packet_identity_path"]).read_text(encoding="utf-8"))
         signal = build_bodypaint_export_signal_from_paths(self.paths, "bodypaint-smoke")
         manifest_path = Path(registry["package_index"][package_id]["manifest_path"])
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         staged_source = Path(result["export_root"]) / registry["package_index"][package_id]["source_model_relpath"]
+        workspace_view = json.loads(Path(result["workspace_view_path"]).read_text(encoding="utf-8"))
 
         self.assertEqual(result["packages"], [package_id])
         self.assertEqual(result["ready_items"], 1)
@@ -192,6 +194,14 @@ class BodyPaintExportTests(unittest.TestCase):
         self.assertEqual(manifest["consumer_packet"]["packet_kind"], "external_model_packet")
         self.assertEqual(manifest["viewer"]["preferred_model"], "outputs/model.bodypaint.glb")
         self.assertEqual(manifest["source_model"]["artifact_kind"], "output_fbx")
+        self.assertEqual(packet_identity["identity_kind"], "bodypaint_packet_identity")
+        self.assertEqual(packet_identity["identity_version"], "toy-yard-bodypaint-packet-identity-0.1")
+        self.assertTrue(packet_identity["stable_fingerprint"])
+        self.assertEqual(packet_identity["volatile_keys_ignored"], ["generated_at_utc"])
+        self.assertEqual(packet_identity["excluded_files"], ["summary/bodypaint_packet_identity.json"])
+        self.assertFalse(any(item["path"] == "summary/bodypaint_packet_identity.json" for item in packet_identity["files"]))
+        self.assertTrue(any(item["path"] == "summary/bodypaint_packet_registry.json" for item in packet_identity["files"]))
+        self.assertEqual(workspace_view["packet_identity_path"], result["packet_identity_path"])
         self.assertEqual(signal["handoff_state"], "bodypaint_packet_ready")
         self.assertTrue(signal["handoff_ready"])
         self.assertEqual(signal["handoff_target"], "BodyPaint")
@@ -203,6 +213,7 @@ class BodyPaintExportTests(unittest.TestCase):
         self.assertIn("bodypaint_input_manifest", artifact_kinds)
         self.assertIn("bodypaint_source_model", artifact_kinds)
         self.assertIn("bodypaint_packet_registry", artifact_kinds)
+        self.assertIn("bodypaint_packet_identity", artifact_kinds)
 
     def test_export_bodypaint_view_bridges_aiue_pmx_fbx_and_copies_upstream_package(self) -> None:
         sample_id, package_id, _ = self._seed_character_package()
