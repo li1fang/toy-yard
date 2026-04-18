@@ -33,9 +33,11 @@
     },
     "target_transfer_profile": { "type": "string" },
     "export_result": { "type": "object" },
+    "source_tree_manifest": { "type": "object" },
     "prepare_transport": { "type": ["object", "null"] },
     "transfer": { "type": "object" },
     "verify_result": { "type": ["object", "null"] },
+    "target_tree_manifest": { "type": ["object", "null"] },
     "failure_stage": { "type": "string" }
   },
   "additionalProperties": true

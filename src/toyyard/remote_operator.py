@@ -518,6 +518,47 @@ print(json.dumps(payload, ensure_ascii=True))
 """.strip()
 
 
+def _directory_tree_manifest_python_code(root_path: str) -> str:
+    return f"""
+import hashlib, json, pathlib
+root = pathlib.Path({root_path!r})
+files = []
+total_bytes = 0
+if root.exists():
+    for path in sorted(p for p in root.rglob('*') if p.is_file()):
+        data_hash = hashlib.sha256()
+        size = 0
+        with path.open('rb') as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                size += len(chunk)
+                data_hash.update(chunk)
+        rel = path.relative_to(root).as_posix()
+        total_bytes += size
+        files.append({{
+            'path': rel,
+            'size_bytes': size,
+            'sha256': data_hash.hexdigest(),
+        }})
+tree_material = json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')
+payload = {{
+    'root': str(root),
+    'exists': root.exists(),
+    'file_count': len(files),
+    'total_bytes': total_bytes,
+    'tree_hash': hashlib.sha256(tree_material).hexdigest(),
+    'files': files,
+}}
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
+def _parse_last_json_stdout(transport: dict[str, Any]) -> dict[str, Any]:
+    stdout = str(transport.get("stdout") or "").strip()
+    if not stdout:
+        return {}
+    return json.loads(stdout.splitlines()[-1])
+
+
 def _verify_audio_catalog_python_code(canonical_package_id: str) -> str:
     return f"""
 import json, os, pathlib, sqlite3
@@ -1122,6 +1163,35 @@ def remote_handoff_bodypaint_view(
         }
         return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
+    source_tree_command = _remote_python_command(
+        source_profile,
+        python_code=_directory_tree_manifest_python_code(export_root),
+        project_root=str(source_host["project_root"]),
+    )
+    source_tree_transport = _run_subprocess(_ssh_argv(source_profile, source_tree_command), timeout=300)
+    source_tree_manifest = _parse_last_json_stdout(source_tree_transport) if source_tree_transport["returncode"] == 0 else {}
+    if source_tree_transport["returncode"] != 0 or not source_tree_manifest.get("exists"):
+        payload = {
+            "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+            "operation_id": operation_id,
+            "operation_kind": "bodypaint_view_handoff",
+            "lane": "bodypaint",
+            "status": "fail",
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "export_result": export_result,
+            "source_export_root": export_root,
+            "source_tree_manifest": {
+                "transport": source_tree_transport,
+                "payload": source_tree_manifest,
+            },
+            "failure_stage": "source_manifest",
+        }
+        return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
+
     target_transfer = _transfer_profile(target_profile, target_transfer_profile)
     target_dir = str(target_transfer.get("remote_directory") or "").strip()
     if not target_dir:
@@ -1161,6 +1231,7 @@ def remote_handoff_bodypaint_view(
     transfer_transport = _run_subprocess(_ssh_argv(source_profile, scp_command), timeout=600)
 
     verify_result: dict[str, Any] | None = None
+    target_tree_manifest_result: dict[str, Any] | None = None
     if transfer_transport["returncode"] == 0:
         verify_command = _remote_python_command(
             target_profile,
@@ -1168,14 +1239,29 @@ def remote_handoff_bodypaint_view(
             project_root=str(target_host["project_root"]),
         )
         verify_transport = _run_subprocess(_ssh_argv(target_profile, verify_command), timeout=120)
-        verify_payload: dict[str, Any] = {}
-        if verify_transport["returncode"] == 0 and str(verify_transport["stdout"]).strip():
-            verify_payload = json.loads(str(verify_transport["stdout"]).strip().splitlines()[-1])
+        verify_payload: dict[str, Any] = _parse_last_json_stdout(verify_transport) if verify_transport["returncode"] == 0 else {}
         verify_result = {
             "transport": verify_transport,
             "payload": verify_payload,
             "acceptance": dict(verify_payload.get("acceptance") or {}),
         }
+        tree_command = _remote_python_command(
+            target_profile,
+            python_code=_directory_tree_manifest_python_code(target_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        tree_transport = _run_subprocess(_ssh_argv(target_profile, tree_command), timeout=300)
+        tree_payload = _parse_last_json_stdout(tree_transport) if tree_transport["returncode"] == 0 else {}
+        target_tree_manifest_result = {
+            "transport": tree_transport,
+            "payload": tree_payload,
+        }
+
+    source_tree_hash = str(source_tree_manifest.get("tree_hash") or "")
+    target_tree_hash = ""
+    if target_tree_manifest_result:
+        target_tree_hash = str(target_tree_manifest_result.get("payload", {}).get("tree_hash") or "")
+    tree_hash_match = bool(source_tree_hash and target_tree_hash and source_tree_hash == target_tree_hash)
 
     status = "pass"
     failure_stage = ""
@@ -1185,6 +1271,9 @@ def remote_handoff_bodypaint_view(
     elif not verify_result or not all(bool(value) for value in verify_result.get("acceptance", {}).values()):
         status = "fail"
         failure_stage = "target_verify"
+    elif not tree_hash_match:
+        status = "fail"
+        failure_stage = "target_hash_verify"
 
     payload = {
         "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
@@ -1203,12 +1292,20 @@ def remote_handoff_bodypaint_view(
         "target_transfer_profile": target_transfer_profile,
         "export_result": export_result,
         "source_export_root": export_root,
+        "source_tree_manifest": {
+            "transport": source_tree_transport,
+            "payload": source_tree_manifest,
+        },
         "prepare_transport": prepare_transport,
         "transfer": {
             "command_transport": transfer_transport,
             "target_export_root": target_export_root,
+            "tree_hash_match": tree_hash_match,
+            "source_tree_hash": source_tree_hash,
+            "target_tree_hash": target_tree_hash,
         },
         "verify_result": verify_result,
+        "target_tree_manifest": target_tree_manifest_result,
         "failure_stage": failure_stage,
     }
     return _finish_operator_run(conn, paths, operation_id=operation_id, status=status, payload=payload)

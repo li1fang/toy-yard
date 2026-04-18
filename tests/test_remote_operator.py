@@ -242,12 +242,27 @@ class RemoteOperatorTests(unittest.TestCase):
                 "has_packets": True,
             },
         }
+        tree_payload = {
+            "root": "/srv/toy-yard/05_publish/bodypaint/trial-bodypaint-cassia",
+            "exists": True,
+            "file_count": 4,
+            "total_bytes": 400,
+            "tree_hash": "tree123",
+            "files": [
+                {"path": "summary/bodypaint_suite_summary.json", "size_bytes": 100, "sha256": "a"},
+                {"path": "summary/bodypaint_packet_registry.json", "size_bytes": 100, "sha256": "b"},
+                {"path": "summary/bodypaint_packet_check.json", "size_bytes": 100, "sha256": "c"},
+                {"path": "summary/communication_signal.json", "size_bytes": 100, "sha256": "d"},
+            ],
+        }
         mock_run.side_effect = [
             _Completed(returncode=0, stdout=json.dumps({"project_root": "/srv/toy-yard", "repo_root": "/srv/toy-yard/repo", "repo_exists": True, "git_branch": "main", "git_commit": "abc123", "git_origin": "https://example.com/repo.git", "python_executable": "/usr/bin/python3", "python_version": "3.13.7", "venv_candidates": [], "db_path": "/srv/toy-yard/_db/toyyard.sqlite", "db_exists": True, "exchange_root": "/srv/toy-yard/_exchange", "index_packet_root": "/srv/toy-yard/_exchange/index_packets", "index_packet_root_exists": True, "toyyard_entry": "/srv/toy-yard/repo/toyyard.py", "toyyard_entry_exists": True}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(export_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(tree_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
         ]
 
         result = remote_handoff_bodypaint_view(
@@ -262,6 +277,7 @@ class RemoteOperatorTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["transfer"]["target_export_root"], "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia")
+        self.assertTrue(result["transfer"]["tree_hash_match"])
         self.assertTrue(all(result["verify_result"]["acceptance"].values()))
 
 

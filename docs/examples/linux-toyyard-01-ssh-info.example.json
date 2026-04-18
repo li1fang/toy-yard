@@ -29,7 +29,8 @@
       "credential_ref": {
         "kind": "ssh_key_file",
         "secret_id": "vcompose-fabric-mesh",
-        "local_path": "C:/Users/garro/.ssh/vcompose-fabric-mesh"
+        "local_path": "C:/Users/garro/.ssh/vcompose-fabric-mesh",
+        "windows_path": "C:/Users/garro/.ssh/vcompose-fabric-mesh"
       }
     }
   },
@@ -44,6 +45,13 @@
       "remote_directory": "/srv/toy-yard/_exchange/index_packets",
       "path_style": "posix",
       "create_if_missing": false
+    },
+    {
+      "profile_id": "toy_yard_bodypaint_packets",
+      "purpose": "Toy-Yard BodyPaint export drop on the Linux runtime node",
+      "remote_directory": "/srv/toy-yard/_exchange/consumer_packets/bodypaint",
+      "path_style": "posix",
+      "create_if_missing": true
     }
   ]
 }
