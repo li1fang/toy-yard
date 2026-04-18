@@ -387,6 +387,58 @@ def _scp_command_from_source(
     raise ValueError(f"Unsupported source shell for scp handoff: {source_shell}")
 
 
+def _rsync_command_from_source(
+    *,
+    source_profile: dict[str, Any],
+    target_profile: dict[str, Any],
+    source_path: str,
+    target_path: str,
+) -> str:
+    source_shell = str(source_profile.get("node", {}).get("shell_family") or "")
+    target_shell = str(target_profile.get("node", {}).get("shell_family") or "")
+    if source_shell != "bash" or target_shell != "bash":
+        raise ValueError("rsync handoff currently requires bash on both source and target hosts.")
+
+    peer_key_path = _peer_credential_path_for_source(target_profile, source_shell)
+    if not peer_key_path:
+        raise ValueError(
+            f"Target host profile `{target_profile.get('profile_name')}` is missing source-side credential path for bash rsync."
+        )
+
+    target_host_name = str(target_profile.get("network", {}).get("primary_ipv4") or target_profile.get("network", {}).get("primary_hostname") or "")
+    target_user = str(target_profile.get("ssh", {}).get("username") or "")
+    target_port = str(target_profile.get("ssh", {}).get("port") or 22)
+    destination = f"{target_user}@{target_host_name}:{target_path}"
+    host_verification = dict(target_profile.get("ssh", {}).get("host_key_verification") or {})
+    source_known_hosts = host_verification.get("source_known_hosts_path") or host_verification.get("known_hosts_path")
+
+    ssh_parts = [
+        "ssh",
+        "-p",
+        target_port,
+        "-i",
+        str(peer_key_path),
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+    ]
+    if source_known_hosts:
+        ssh_parts.extend(["-o", f"UserKnownHostsFile={source_known_hosts}"])
+    ssh_transport = " ".join(shlex.quote(part) for part in ssh_parts)
+    parts = [
+        "rsync",
+        "-az",
+        "--partial",
+        "--append-verify",
+        "-e",
+        shlex.quote(ssh_transport),
+        shlex.quote(source_path),
+        shlex.quote(destination),
+    ]
+    return " ".join(parts)
+
+
 def _run_subprocess(argv: list[str], *, timeout: int = 120) -> dict[str, Any]:
     completed = subprocess.run(
         argv,
@@ -441,7 +493,7 @@ def _ensure_remote_directory(profile: dict[str, Any], remote_dir: str) -> dict[s
 
 def _status_python_code() -> str:
     return """
-import json, os, pathlib, subprocess, sys
+import json, os, pathlib, shutil, subprocess, sys
 project_root = pathlib.Path(os.environ['TOYYARD_PROJECT_ROOT'])
 repo_root = pathlib.Path(os.environ.get('TOYYARD_REPO_ROOT') or project_root)
 candidate = project_root / 'repo'
@@ -475,6 +527,11 @@ payload = {
     'index_packet_root_exists': (project_root / '_exchange' / 'index_packets').exists(),
     'toyyard_entry': str(repo_root / 'toyyard.py'),
     'toyyard_entry_exists': (repo_root / 'toyyard.py').exists(),
+    'transport_capabilities': {
+        'scp_available': bool(shutil.which('scp')),
+        'sftp_available': bool(shutil.which('sftp')),
+        'rsync_available': bool(shutil.which('rsync')),
+    },
 }
 print(json.dumps(payload, ensure_ascii=True))
 """.strip()
@@ -641,6 +698,38 @@ print(json.dumps(payload, ensure_ascii=True))
 """.strip()
 
 
+def _file_sha256_python_code(file_path: str) -> str:
+    return f"""
+import hashlib, json, pathlib
+path = pathlib.Path({file_path!r})
+payload = {{
+    'path': str(path),
+    'exists': path.exists(),
+    'sha256': '',
+    'size_bytes': path.stat().st_size if path.exists() and path.is_file() else 0,
+}}
+if path.exists() and path.is_file():
+    digest = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    payload['sha256'] = digest.hexdigest()
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
+def _transport_capability_python_code() -> str:
+    return """
+import json, shutil
+payload = {
+    'scp_available': bool(shutil.which('scp')),
+    'sftp_available': bool(shutil.which('sftp')),
+    'rsync_available': bool(shutil.which('rsync')),
+}
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
 def _parse_last_json_stdout(transport: dict[str, Any]) -> dict[str, Any]:
     stdout = str(transport.get("stdout") or "").strip()
     if not stdout:
@@ -707,6 +796,79 @@ def _remote_status_payload(profile: dict[str, Any], project_root: str) -> dict[s
         raise RuntimeError("remote status returned invalid JSON")
     payload["_transport"] = result
     return payload
+
+
+def _remote_transport_capabilities(profile: dict[str, Any], project_root: str) -> dict[str, Any]:
+    command = _remote_python_command(profile, python_code=_transport_capability_python_code(), project_root=project_root)
+    transport = _run_subprocess(_ssh_argv(profile, command), timeout=60)
+    payload = _parse_last_json_stdout(transport) if transport["returncode"] == 0 else {}
+    capabilities = {
+        "scp_available": bool(payload.get("scp_available")),
+        "sftp_available": bool(payload.get("sftp_available")),
+        "rsync_available": bool(payload.get("rsync_available")),
+    }
+    return {
+        "transport": transport,
+        "payload": payload,
+        "capabilities": capabilities,
+    }
+
+
+def _select_peer_copy_transport(
+    *,
+    source_profile: dict[str, Any],
+    source_project_root: str,
+    target_profile: dict[str, Any],
+    target_project_root: str,
+    source_path: str,
+    target_path: str,
+    recursive: bool = False,
+) -> dict[str, Any]:
+    source_shell = str(source_profile.get("node", {}).get("shell_family") or "")
+    target_shell = str(target_profile.get("node", {}).get("shell_family") or "")
+    source_caps = _remote_transport_capabilities(source_profile, source_project_root)
+    target_caps = _remote_transport_capabilities(target_profile, target_project_root)
+    source_rsync = bool(source_caps["capabilities"].get("rsync_available"))
+    target_rsync = bool(target_caps["capabilities"].get("rsync_available"))
+
+    if source_shell == "bash" and target_shell == "bash" and source_rsync and target_rsync:
+        command = _rsync_command_from_source(
+            source_profile=source_profile,
+            target_profile=target_profile,
+            source_path=source_path,
+            target_path=target_path,
+        )
+        return {
+            "selected_transport": "rsync",
+            "resume_supported": True,
+            "selection_reason": "bash_source_and_target_with_rsync_available",
+            "command": command,
+            "source_capabilities": source_caps,
+            "target_capabilities": target_caps,
+        }
+
+    if source_shell != "bash" or target_shell != "bash":
+        selection_reason = "rsync_requires_bash_on_both_nodes"
+    elif not source_rsync:
+        selection_reason = "source_host_lacks_rsync"
+    else:
+        selection_reason = "target_host_lacks_rsync"
+
+    command = _scp_command_from_source(
+        source_profile=source_profile,
+        target_profile=target_profile,
+        source_path=source_path,
+        target_path=target_path,
+        recursive=recursive,
+    )
+    return {
+        "selected_transport": "scp",
+        "resume_supported": False,
+        "selection_reason": selection_reason,
+        "command": command,
+        "source_capabilities": source_caps,
+        "target_capabilities": target_caps,
+    }
 
 
 def _allow_remote_toyyard_args(args: list[str]) -> None:
@@ -1064,43 +1226,27 @@ def remote_handoff_audio_index(
         return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
     target_transfer = _transfer_profile(target_profile, target_transfer_profile)
-    source_shell = str(source_profile.get("node", {}).get("shell_family") or "")
-    if source_shell != "bash":
-        raise ValueError("Remote audio handoff currently requires a bash source host for peer-to-peer scp.")
-    peer_key_path = _peer_credential_path_for_source(target_profile, source_shell)
-    if not peer_key_path:
-        raise ValueError(
-            f"Target host profile `{target_profile.get('profile_name')}` is missing source-side credential path for bash scp."
-        )
 
-    source_hash_cmd = f"sha256sum {shlex.quote(packet_path)} | awk '{{print $1}}'"
-    source_hash_result = _run_subprocess(_ssh_argv(source_profile, source_hash_cmd), timeout=60)
-    source_hash = ""
-    if source_hash_result["returncode"] == 0 and str(source_hash_result["stdout"]).strip():
-        source_hash = str(source_hash_result["stdout"]).strip().splitlines()[-1]
+    source_hash_command = _remote_python_command(
+        source_profile,
+        python_code=_file_sha256_python_code(packet_path),
+        project_root=str(source_host["project_root"]),
+    )
+    source_hash_transport = _run_subprocess(_ssh_argv(source_profile, source_hash_command), timeout=120)
+    source_hash_payload = _parse_last_json_stdout(source_hash_transport) if source_hash_transport["returncode"] == 0 else {}
+    source_hash = str(source_hash_payload.get("sha256") or "")
 
     target_dir = str(target_transfer.get("remote_directory") or "")
-    target_host_name = str(target_profile.get("network", {}).get("primary_ipv4") or target_profile.get("network", {}).get("primary_hostname") or "")
-    target_user = str(target_profile.get("ssh", {}).get("username") or "")
-    target_port = str(target_profile.get("ssh", {}).get("port") or 22)
-    scp_parts = [
-        "scp",
-        "-P",
-        target_port,
-        "-i",
-        shlex.quote(str(peer_key_path)),
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=yes",
-        shlex.quote(packet_path),
-        f"{shlex.quote(target_user)}@{shlex.quote(target_host_name)}:{shlex.quote(target_dir.rstrip('/') + '/')}",
-    ]
-    source_known_hosts = dict(target_profile.get("ssh", {}).get("host_key_verification") or {}).get("source_known_hosts_path")
-    if source_known_hosts:
-        scp_parts[8:8] = ["-o", f"UserKnownHostsFile={source_known_hosts}"]
-    scp_command = " ".join(scp_parts)
-    transfer_transport = _run_subprocess(_ssh_argv(source_profile, scp_command), timeout=300)
+    transfer_plan = _select_peer_copy_transport(
+        source_profile=source_profile,
+        source_project_root=str(source_host["project_root"]),
+        target_profile=target_profile,
+        target_project_root=str(target_host["project_root"]),
+        source_path=packet_path,
+        target_path=target_dir.rstrip("/") + "/",
+        recursive=False,
+    )
+    transfer_transport = _run_subprocess(_ssh_argv(source_profile, str(transfer_plan["command"])), timeout=300)
     packet_name = Path(packet_path).name
     target_packet_path = str(target_dir.rstrip("/")) + "/" + packet_name if target_dir else packet_name
 
@@ -1108,10 +1254,14 @@ def remote_handoff_audio_index(
     target_import_result: dict[str, Any] | None = None
     verify_result: dict[str, Any] | None = None
     if transfer_transport["returncode"] == 0:
-        target_hash_cmd = f"Get-FileHash -Algorithm SHA256 {_quote_ps(target_packet_path.replace('/', '\\'))} | Select-Object -ExpandProperty Hash"
-        target_hash_transport = _run_subprocess(_ssh_argv(target_profile, target_hash_cmd), timeout=120)
-        if target_hash_transport["returncode"] == 0 and str(target_hash_transport["stdout"]).strip():
-            target_hash = str(target_hash_transport["stdout"]).strip().splitlines()[-1]
+        target_hash_command = _remote_python_command(
+            target_profile,
+            python_code=_file_sha256_python_code(target_packet_path),
+            project_root=str(target_host["project_root"]),
+        )
+        target_hash_transport = _run_subprocess(_ssh_argv(target_profile, target_hash_command), timeout=120)
+        target_hash_payload = _parse_last_json_stdout(target_hash_transport) if target_hash_transport["returncode"] == 0 else {}
+        target_hash = str(target_hash_payload.get("sha256") or "")
         if import_target:
             target_import_result = remote_toyyard(
                 conn,
@@ -1172,7 +1322,16 @@ def remote_handoff_audio_index(
         "export_result": export_result,
         "source_packet_path": packet_path,
         "source_packet_sha256": source_hash,
+        "source_hash_result": {
+            "transport": source_hash_transport,
+            "payload": source_hash_payload,
+        },
         "transfer": {
+            "selected_transport": transfer_plan["selected_transport"],
+            "resume_supported": transfer_plan["resume_supported"],
+            "selection_reason": transfer_plan["selection_reason"],
+            "source_capabilities": transfer_plan["source_capabilities"],
+            "target_capabilities": transfer_plan["target_capabilities"],
             "command_transport": transfer_transport,
             "target_packet_path": target_packet_path,
             "target_packet_sha256": target_hash,
@@ -1444,6 +1603,11 @@ def remote_handoff_bodypaint_view(
             "existing_target_packet_fingerprint": existing_target_packet_fingerprint,
             "transfer": {
                 "command_transport": None,
+                "selected_transport": "noop_verified_existing",
+                "resume_supported": False,
+                "selection_reason": "verified_target_packet_fingerprint_already_matches_source",
+                "source_capabilities": None,
+                "target_capabilities": None,
                 "target_export_root": target_export_root,
                 "skipped_existing_verified": True,
                 "skip_reason": "verified_target_packet_fingerprint_already_matches_source",
@@ -1485,14 +1649,16 @@ def remote_handoff_bodypaint_view(
         }
         return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
-    scp_command = _scp_command_from_source(
+    transfer_plan = _select_peer_copy_transport(
         source_profile=source_profile,
+        source_project_root=str(source_host["project_root"]),
         target_profile=target_profile,
+        target_project_root=str(target_host["project_root"]),
         source_path=export_root,
         target_path=str(staging_operation_root.rstrip("/\\")) + ("/" if "/" in staging_operation_root or "\\" not in staging_operation_root else "\\"),
         recursive=True,
     )
-    transfer_transport = _run_subprocess(_ssh_argv(source_profile, scp_command), timeout=600)
+    transfer_transport = _run_subprocess(_ssh_argv(source_profile, str(transfer_plan["command"])), timeout=600)
 
     staged_verify_result: dict[str, Any] | None = None
     staged_tree_manifest_result: dict[str, Any] | None = None
@@ -1665,6 +1831,11 @@ def remote_handoff_bodypaint_view(
         "existing_target_packet_fingerprint": existing_target_packet_fingerprint,
         "staging_prepare_transport": staging_prepare_transport,
         "transfer": {
+            "selected_transport": transfer_plan["selected_transport"],
+            "resume_supported": transfer_plan["resume_supported"],
+            "selection_reason": transfer_plan["selection_reason"],
+            "source_capabilities": transfer_plan["source_capabilities"],
+            "target_capabilities": transfer_plan["target_capabilities"],
             "command_transport": transfer_transport,
             "target_export_root": target_export_root,
             "target_staging_root": target_staged_export_root,

@@ -93,6 +93,9 @@ The BodyPaint handoff now records both sides of the directory transfer:
 - `transfer.staged_tree_hash_match`
 - `transfer.tree_hash_match`
 - `promote_result.payload.promoted`
+- `transfer.selected_transport`
+- `transfer.resume_supported`
+- `transfer.selection_reason`
 
 This is still not a resumable transfer protocol. It is the first integrity and isolation layer:
 
@@ -107,3 +110,5 @@ Repeated runs are idempotent at the transfer level: when the final target direct
 For BodyPaint v0, the stable packet fingerprint ignores approved volatile JSON keys:
 
 - `generated_at_utc`
+
+When the source and target are both `bash` hosts and both expose `rsync`, the operator may use resumable `rsync` instead of `scp`. Mixed-shell pairs, including the current Windows -> Linux lane, continue to fall back to `scp`.

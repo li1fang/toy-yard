@@ -16,6 +16,7 @@ if str(SRC) not in sys.path:
 from toyyard.db import init_db
 from toyyard.paths import ProjectPaths
 from toyyard.remote_operator import (
+    _select_peer_copy_transport,
     load_ssh_host_profile,
     register_remote_host,
     remote_handoff_bodypaint_view,
@@ -196,6 +197,11 @@ class RemoteOperatorTests(unittest.TestCase):
             "index_packet_root_exists": True,
             "toyyard_entry": "/srv/toy-yard/repo/toyyard.py",
             "toyyard_entry_exists": True,
+            "transport_capabilities": {
+                "scp_available": True,
+                "sftp_available": True,
+                "rsync_available": True,
+            },
         }
         mock_run.return_value = _Completed(returncode=0, stdout=json.dumps(payload) + "\n", stderr="")
 
@@ -204,6 +210,38 @@ class RemoteOperatorTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["status_payload"]["repo_root"], "/srv/toy-yard/repo")
         self.assertEqual(result["status_payload"]["git_commit"], "abc1234")
+        self.assertTrue(result["status_payload"]["transport_capabilities"]["rsync_available"])
+
+    @patch("toyyard.remote_operator.subprocess.run")
+    def test_select_peer_copy_transport_prefers_rsync_for_bash_hosts(self, mock_run) -> None:
+        target_profile = json.loads(json.dumps(self.profile_payload))
+        target_profile["profile_name"] = "linux-toyyard-02"
+        target_profile["node"]["node_id"] = "linux-toyyard-02"
+        target_profile["network"]["primary_hostname"] = "linux-toyyard-02.local"
+        target_profile["network"]["primary_ipv4"] = "192.168.1.60"
+        target_profile["ssh"]["username"] = "worker"
+        target_profile["ssh"]["auth"]["credential_ref"]["linux_path"] = "/home/whipz/.ssh/linux-toyyard-02"
+        target_profile["ssh"]["host_key_verification"]["source_known_hosts_path"] = "/home/whipz/.ssh/linux-known_hosts"
+
+        mock_run.side_effect = [
+            _Completed(returncode=0, stdout=json.dumps({"scp_available": True, "sftp_available": True, "rsync_available": True}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps({"scp_available": True, "sftp_available": True, "rsync_available": True}) + "\n"),
+        ]
+
+        result = _select_peer_copy_transport(
+            source_profile=self.profile_payload,
+            source_project_root="/srv/toy-yard",
+            target_profile=target_profile,
+            target_project_root="/srv/toy-yard",
+            source_path="/srv/toy-yard/05_publish/bodypaint/demo-profile",
+            target_path="/srv/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/op123/",
+            recursive=True,
+        )
+
+        self.assertEqual(result["selected_transport"], "rsync")
+        self.assertTrue(result["resume_supported"])
+        self.assertEqual(result["selection_reason"], "bash_source_and_target_with_rsync_available")
+        self.assertIn("rsync -az --partial --append-verify", result["command"])
 
     def test_remote_toyyard_rejects_unapproved_command(self) -> None:
         register_remote_host(self.conn, self.paths, profile_path=self.profile_path, project_root="/srv/toy-yard")
@@ -312,6 +350,8 @@ class RemoteOperatorTests(unittest.TestCase):
             _Completed(returncode=0, stdout=json.dumps(missing_tree_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(missing_fingerprint_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
+            _Completed(returncode=0, stdout=json.dumps({"scp_available": True, "sftp_available": True, "rsync_available": True}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps({"scp_available": True, "sftp_available": True, "rsync_available": False}) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/op_remote-handoff-bodypaint-view_abc123/trial-bodypaint-cassia"}) + "\n"),
@@ -338,6 +378,9 @@ class RemoteOperatorTests(unittest.TestCase):
             result["transfer"]["staging_operation_root"],
             "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/" + result["operation_id"],
         )
+        self.assertEqual(result["transfer"]["selected_transport"], "scp")
+        self.assertFalse(result["transfer"]["resume_supported"])
+        self.assertEqual(result["transfer"]["selection_reason"], "rsync_requires_bash_on_both_nodes")
         self.assertTrue(result["transfer"]["staged_tree_hash_match"])
         self.assertTrue(result["transfer"]["staged_stable_fingerprint_match"])
         self.assertTrue(result["transfer"]["tree_hash_match"])

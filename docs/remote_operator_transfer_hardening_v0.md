@@ -94,15 +94,20 @@ The next practical refinement after this is to move stable packet fingerprint ou
 
 ### H4: Resumable Transfer Capability
 
-Status: `planned`
+Status: `implemented for bash-to-bash transport selection; scp fallback remains default for mixed shells`
 
-Preferred implementation:
+Current implementation:
 
-- use `rsync --partial --append-verify` when both nodes support it
-- fall back to `scp` when `rsync` is unavailable
-- record selected transport in the result payload
+- detect `rsync` / `scp` / `sftp` availability per host during remote status or handoff planning
+- use `rsync --partial --append-verify` when both source and target are `bash` hosts and both expose `rsync`
+- fall back to `scp` for mixed-shell pairs or hosts without `rsync`
+- record `transfer.selected_transport`, `transfer.resume_supported`, and `transfer.selection_reason` in the result payload
 
-Windows OpenSSH hosts may not have `rsync`, so support must be capability-detected per host.
+Current practical consequence:
+
+- the current Windows -> Linux BodyPaint lane still falls back to `scp`
+- Linux -> Linux lanes can now use resumable `rsync`
+- the transport seam is now explicit instead of being hidden inside the shell command string
 
 ### H5: Chunked Large Artifact Transfer
 
