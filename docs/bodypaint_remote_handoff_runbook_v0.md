@@ -51,7 +51,7 @@ toyyard remote handoff bodypaint-view \
 10. promotes the staged directory to:
     - `<target_profile_dir>/<profile>/`
 11. verifies the final target export directory shape and tree hash
-12. if the final target directory already exists and already matches the source tree hash, the operator skips transfer and returns a verified no-op result
+12. if the final target directory already exists and already matches the source stable packet fingerprint, the operator skips transfer and returns a verified no-op result
 
 ## Important Boundary
 
@@ -102,4 +102,8 @@ This is still not a resumable transfer protocol. It is the first integrity and i
 
 The target consumer-visible directory is only updated after staged shape and hash checks pass.
 
-Repeated runs are idempotent at the transfer level: when the final target directory already exists, passes packet-shape verification, and has the same tree hash as the source, the operator returns `transfer.skipped_existing_verified = true` and does not re-run `scp`.
+Repeated runs are idempotent at the transfer level: when the final target directory already exists, passes packet-shape verification, and has the same stable packet fingerprint as the source, the operator returns `transfer.skipped_existing_verified = true` and does not re-run `scp`.
+
+For BodyPaint v0, the stable packet fingerprint ignores approved volatile JSON keys:
+
+- `generated_at_utc`

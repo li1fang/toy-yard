@@ -40,9 +40,18 @@ That makes the raw source tree hash differ across runs, even when the logical pa
 
 ## Conclusion
 
-`skip_existing_verified` is implemented at the Remote Operator layer, but practical skip behavior still depends on packet determinism.
+`skip_existing_verified` is implemented at the Remote Operator layer, but practical skip behavior depends on the identity function it uses.
 
-The next refinement should be:
+The next refinement is:
 
-- introduce a stable packet fingerprint for skip/resume identity
+- use a stable packet fingerprint for skip/resume identity
 - keep raw tree hash for transport integrity
+
+That allows repeated exports with different `generated_at_utc` values to be treated as the same logical packet.
+
+## Follow-Up
+
+This refinement has now been implemented in Remote Operator Mode for BodyPaint v0:
+
+- skip identity uses stable packet fingerprint
+- transport integrity still uses raw tree hash

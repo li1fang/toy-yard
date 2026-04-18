@@ -255,6 +255,19 @@ class RemoteOperatorTests(unittest.TestCase):
                 {"path": "summary/communication_signal.json", "size_bytes": 100, "sha256": "d"},
             ],
         }
+        fingerprint_payload = {
+            "root": "/srv/toy-yard/05_publish/bodypaint/trial-bodypaint-cassia",
+            "exists": True,
+            "file_count": 4,
+            "stable_fingerprint": "stable123",
+            "volatile_keys_ignored": ["generated_at_utc"],
+            "files": [
+                {"path": "summary/bodypaint_suite_summary.json", "kind": "json", "fingerprint_sha256": "ja"},
+                {"path": "summary/bodypaint_packet_registry.json", "kind": "json", "fingerprint_sha256": "jb"},
+                {"path": "summary/bodypaint_packet_check.json", "kind": "json", "fingerprint_sha256": "jc"},
+                {"path": "summary/communication_signal.json", "kind": "json", "fingerprint_sha256": "jd"},
+            ],
+        }
         missing_verify_payload = {
             "required_files": {
                 "summary_path": False,
@@ -281,20 +294,32 @@ class RemoteOperatorTests(unittest.TestCase):
             "tree_hash": "",
             "files": [],
         }
+        missing_fingerprint_payload = {
+            "root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia",
+            "exists": False,
+            "file_count": 0,
+            "stable_fingerprint": "",
+            "volatile_keys_ignored": ["generated_at_utc"],
+            "files": [],
+        }
         mock_run.side_effect = [
             _Completed(returncode=0, stdout=json.dumps({"project_root": "/srv/toy-yard", "repo_root": "/srv/toy-yard/repo", "repo_exists": True, "git_branch": "main", "git_commit": "abc123", "git_origin": "https://example.com/repo.git", "python_executable": "/usr/bin/python3", "python_version": "3.13.7", "venv_candidates": [], "db_path": "/srv/toy-yard/_db/toyyard.sqlite", "db_exists": True, "exchange_root": "/srv/toy-yard/_exchange", "index_packet_root": "/srv/toy-yard/_exchange/index_packets", "index_packet_root_exists": True, "toyyard_entry": "/srv/toy-yard/repo/toyyard.py", "toyyard_entry_exists": True}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(export_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(fingerprint_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout=json.dumps(missing_verify_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(missing_tree_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(missing_fingerprint_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/op_remote-handoff-bodypaint-view_abc123/trial-bodypaint-cassia"}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(fingerprint_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/op_remote-handoff-bodypaint-view_abc123/trial-bodypaint-cassia"}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps({"staged_exists": True, "final_existed": False, "backup_path": "", "action": "promoted", "promoted": True}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(fingerprint_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
         ]
 
         result = remote_handoff_bodypaint_view(
@@ -314,7 +339,9 @@ class RemoteOperatorTests(unittest.TestCase):
             "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/" + result["operation_id"],
         )
         self.assertTrue(result["transfer"]["staged_tree_hash_match"])
+        self.assertTrue(result["transfer"]["staged_stable_fingerprint_match"])
         self.assertTrue(result["transfer"]["tree_hash_match"])
+        self.assertTrue(result["transfer"]["stable_fingerprint_match"])
         self.assertTrue(all(result["verify_result"]["acceptance"].values()))
         self.assertTrue(result["promote_result"]["payload"]["promoted"])
 
@@ -363,13 +390,29 @@ class RemoteOperatorTests(unittest.TestCase):
                 {"path": "summary/communication_signal.json", "size_bytes": 100, "sha256": "d"},
             ],
         }
+        existing_tree_payload = dict(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia", "tree_hash": "oldtree"})
+        fingerprint_payload = {
+            "root": "/srv/toy-yard/05_publish/bodypaint/trial-bodypaint-cassia",
+            "exists": True,
+            "file_count": 4,
+            "stable_fingerprint": "stable123",
+            "volatile_keys_ignored": ["generated_at_utc"],
+            "files": [
+                {"path": "summary/bodypaint_suite_summary.json", "kind": "json", "fingerprint_sha256": "ja"},
+                {"path": "summary/bodypaint_packet_registry.json", "kind": "json", "fingerprint_sha256": "jb"},
+                {"path": "summary/bodypaint_packet_check.json", "kind": "json", "fingerprint_sha256": "jc"},
+                {"path": "summary/communication_signal.json", "kind": "json", "fingerprint_sha256": "jd"},
+            ],
+        }
         mock_run.side_effect = [
             _Completed(returncode=0, stdout=json.dumps({"project_root": "/srv/toy-yard", "repo_root": "/srv/toy-yard/repo", "repo_exists": True, "git_branch": "main", "git_commit": "abc123", "git_origin": "https://example.com/repo.git", "python_executable": "/usr/bin/python3", "python_version": "3.13.7", "venv_candidates": [], "db_path": "/srv/toy-yard/_db/toyyard.sqlite", "db_exists": True, "exchange_root": "/srv/toy-yard/_exchange", "index_packet_root": "/srv/toy-yard/_exchange/index_packets", "index_packet_root_exists": True, "toyyard_entry": "/srv/toy-yard/repo/toyyard.py", "toyyard_entry_exists": True}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(export_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(fingerprint_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
-            _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(existing_tree_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(fingerprint_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
         ]
 
         result = remote_handoff_bodypaint_view(
@@ -385,7 +428,9 @@ class RemoteOperatorTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(result["transfer"]["skipped_existing_verified"])
         self.assertIsNone(result["transfer"]["command_transport"])
-        self.assertEqual(result["transfer"]["skip_reason"], "verified_target_tree_already_matches_source")
+        self.assertEqual(result["transfer"]["skip_reason"], "verified_target_packet_fingerprint_already_matches_source")
+        self.assertFalse(result["transfer"]["tree_hash_match"])
+        self.assertTrue(result["transfer"]["stable_fingerprint_match"])
 
 
 if __name__ == "__main__":

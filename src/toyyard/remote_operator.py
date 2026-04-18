@@ -552,6 +552,60 @@ print(json.dumps(payload, ensure_ascii=True))
 """.strip()
 
 
+def _bodypaint_packet_fingerprint_python_code(root_path: str) -> str:
+    return f"""
+import hashlib, json, pathlib
+
+VOLATILE_KEYS = {{'generated_at_utc'}}
+
+def normalize_json(value):
+    if isinstance(value, dict):
+        return {{
+            key: normalize_json(item)
+            for key, item in sorted(value.items())
+            if key not in VOLATILE_KEYS
+        }}
+    if isinstance(value, list):
+        return [normalize_json(item) for item in value]
+    return value
+
+root = pathlib.Path({root_path!r})
+files = []
+if root.exists():
+    for path in sorted(p for p in root.rglob('*') if p.is_file()):
+        rel = path.relative_to(root).as_posix()
+        if path.suffix.lower() == '.json':
+            payload = json.loads(path.read_text(encoding='utf-8-sig'))
+            normalized = normalize_json(payload)
+            material = json.dumps(normalized, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')
+            files.append({{
+                'path': rel,
+                'kind': 'json',
+                'fingerprint_sha256': hashlib.sha256(material).hexdigest(),
+            }})
+        else:
+            digest = hashlib.sha256()
+            with path.open('rb') as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                    digest.update(chunk)
+            files.append({{
+                'path': rel,
+                'kind': 'binary',
+                'fingerprint_sha256': digest.hexdigest(),
+            }})
+material = json.dumps(files, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('utf-8')
+payload = {{
+    'root': str(root),
+    'exists': root.exists(),
+    'file_count': len(files),
+    'stable_fingerprint': hashlib.sha256(material).hexdigest(),
+    'volatile_keys_ignored': sorted(VOLATILE_KEYS),
+    'files': files,
+}}
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
 def _promote_directory_python_code(staged_root: str, final_root: str, operation_id: str) -> str:
     return f"""
 import json, pathlib, shutil
@@ -1226,6 +1280,42 @@ def remote_handoff_bodypaint_view(
             "failure_stage": "source_manifest",
         }
         return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
+    source_packet_fingerprint_command = _remote_python_command(
+        source_profile,
+        python_code=_bodypaint_packet_fingerprint_python_code(export_root),
+        project_root=str(source_host["project_root"]),
+    )
+    source_packet_fingerprint_transport = _run_subprocess(_ssh_argv(source_profile, source_packet_fingerprint_command), timeout=300)
+    source_packet_fingerprint = (
+        _parse_last_json_stdout(source_packet_fingerprint_transport)
+        if source_packet_fingerprint_transport["returncode"] == 0
+        else {}
+    )
+    if source_packet_fingerprint_transport["returncode"] != 0 or not source_packet_fingerprint.get("exists"):
+        payload = {
+            "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+            "operation_id": operation_id,
+            "operation_kind": "bodypaint_view_handoff",
+            "lane": "bodypaint",
+            "status": "fail",
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "export_result": export_result,
+            "source_export_root": export_root,
+            "source_tree_manifest": {
+                "transport": source_tree_transport,
+                "payload": source_tree_manifest,
+            },
+            "source_packet_fingerprint": {
+                "transport": source_packet_fingerprint_transport,
+                "payload": source_packet_fingerprint,
+            },
+            "failure_stage": "source_fingerprint",
+        }
+        return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
     target_transfer = _transfer_profile(target_profile, target_transfer_profile)
     target_dir = str(target_transfer.get("remote_directory") or "").strip()
@@ -1241,7 +1331,7 @@ def remote_handoff_bodypaint_view(
             "target_host": target_host["profile_name"],
             "lane": "bodypaint",
             "profile": profile,
-            "source_tree_hash": source_tree_manifest.get("tree_hash") or "",
+            "stable_fingerprint": source_packet_fingerprint.get("stable_fingerprint") or "",
             "target_transfer_profile": target_transfer_profile,
         },
         sort_keys=True,
@@ -1294,14 +1384,28 @@ def remote_handoff_bodypaint_view(
         "transport": existing_tree_transport,
         "payload": existing_tree_payload,
     }
+    existing_fingerprint_command = _remote_python_command(
+        target_profile,
+        python_code=_bodypaint_packet_fingerprint_python_code(target_export_root),
+        project_root=str(target_host["project_root"]),
+    )
+    existing_fingerprint_transport = _run_subprocess(_ssh_argv(target_profile, existing_fingerprint_command), timeout=300)
+    existing_fingerprint_payload = _parse_last_json_stdout(existing_fingerprint_transport) if existing_fingerprint_transport["returncode"] == 0 else {}
+    existing_target_packet_fingerprint = {
+        "transport": existing_fingerprint_transport,
+        "payload": existing_fingerprint_payload,
+    }
     existing_target_hash = str(existing_tree_payload.get("tree_hash") or "")
+    source_stable_fingerprint = str(source_packet_fingerprint.get("stable_fingerprint") or "")
+    existing_stable_fingerprint = str(existing_fingerprint_payload.get("stable_fingerprint") or "")
     existing_acceptance_ok = all(bool(value) for value in existing_verify_result.get("acceptance", {}).values())
     skip_existing_verified = bool(
         existing_verify_transport["returncode"] == 0
         and existing_tree_transport["returncode"] == 0
+        and existing_fingerprint_transport["returncode"] == 0
         and existing_acceptance_ok
-        and source_tree_manifest.get("tree_hash")
-        and existing_target_hash == str(source_tree_manifest.get("tree_hash") or "")
+        and source_stable_fingerprint
+        and existing_stable_fingerprint == source_stable_fingerprint
     )
 
     if skip_existing_verified:
@@ -1330,17 +1434,25 @@ def remote_handoff_bodypaint_view(
                 "transport": source_tree_transport,
                 "payload": source_tree_manifest,
             },
+            "source_packet_fingerprint": {
+                "transport": source_packet_fingerprint_transport,
+                "payload": source_packet_fingerprint,
+            },
             "prepare_transport": prepare_transport,
             "existing_target_verify_result": existing_verify_result,
             "existing_target_tree_manifest": existing_tree_manifest,
+            "existing_target_packet_fingerprint": existing_target_packet_fingerprint,
             "transfer": {
                 "command_transport": None,
                 "target_export_root": target_export_root,
                 "skipped_existing_verified": True,
-                "skip_reason": "verified_target_tree_already_matches_source",
+                "skip_reason": "verified_target_packet_fingerprint_already_matches_source",
                 "source_tree_hash": str(source_tree_manifest.get("tree_hash") or ""),
                 "target_tree_hash": existing_target_hash,
-                "tree_hash_match": True,
+                "tree_hash_match": existing_target_hash == str(source_tree_manifest.get("tree_hash") or ""),
+                "source_stable_fingerprint": source_stable_fingerprint,
+                "target_stable_fingerprint": existing_stable_fingerprint,
+                "stable_fingerprint_match": True,
             },
             "verify_result": existing_verify_result,
             "target_tree_manifest": existing_tree_manifest,
@@ -1411,12 +1523,29 @@ def remote_handoff_bodypaint_view(
             "transport": staged_tree_transport,
             "payload": staged_tree_payload,
         }
+    staged_packet_fingerprint_result: dict[str, Any] | None = None
+    if transfer_transport["returncode"] == 0:
+        staged_fingerprint_command = _remote_python_command(
+            target_profile,
+            python_code=_bodypaint_packet_fingerprint_python_code(target_staged_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        staged_fingerprint_transport = _run_subprocess(_ssh_argv(target_profile, staged_fingerprint_command), timeout=300)
+        staged_fingerprint_payload = _parse_last_json_stdout(staged_fingerprint_transport) if staged_fingerprint_transport["returncode"] == 0 else {}
+        staged_packet_fingerprint_result = {
+            "transport": staged_fingerprint_transport,
+            "payload": staged_fingerprint_payload,
+        }
 
     source_tree_hash = str(source_tree_manifest.get("tree_hash") or "")
     staged_tree_hash = ""
     if staged_tree_manifest_result:
         staged_tree_hash = str(staged_tree_manifest_result.get("payload", {}).get("tree_hash") or "")
     staged_tree_hash_match = bool(source_tree_hash and staged_tree_hash and source_tree_hash == staged_tree_hash)
+    staged_stable_fingerprint = ""
+    if staged_packet_fingerprint_result:
+        staged_stable_fingerprint = str(staged_packet_fingerprint_result.get("payload", {}).get("stable_fingerprint") or "")
+    staged_stable_fingerprint_match = bool(source_stable_fingerprint and staged_stable_fingerprint and source_stable_fingerprint == staged_stable_fingerprint)
     staged_acceptance_ok = bool(staged_verify_result and all(bool(value) for value in staged_verify_result.get("acceptance", {}).values()))
 
     if transfer_transport["returncode"] == 0 and staged_acceptance_ok and staged_tree_hash_match:
@@ -1457,11 +1586,28 @@ def remote_handoff_bodypaint_view(
             "transport": tree_transport,
             "payload": tree_payload,
         }
+        final_fingerprint_command = _remote_python_command(
+            target_profile,
+            python_code=_bodypaint_packet_fingerprint_python_code(target_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        final_fingerprint_transport = _run_subprocess(_ssh_argv(target_profile, final_fingerprint_command), timeout=300)
+        final_fingerprint_payload = _parse_last_json_stdout(final_fingerprint_transport) if final_fingerprint_transport["returncode"] == 0 else {}
+        target_packet_fingerprint_result = {
+            "transport": final_fingerprint_transport,
+            "payload": final_fingerprint_payload,
+        }
+    else:
+        target_packet_fingerprint_result = None
 
     target_tree_hash = ""
     if target_tree_manifest_result:
         target_tree_hash = str(target_tree_manifest_result.get("payload", {}).get("tree_hash") or "")
     tree_hash_match = bool(source_tree_hash and target_tree_hash and source_tree_hash == target_tree_hash)
+    target_stable_fingerprint = ""
+    if target_packet_fingerprint_result:
+        target_stable_fingerprint = str(target_packet_fingerprint_result.get("payload", {}).get("stable_fingerprint") or "")
+    stable_fingerprint_match = bool(source_stable_fingerprint and target_stable_fingerprint and source_stable_fingerprint == target_stable_fingerprint)
 
     status = "pass"
     failure_stage = ""
@@ -1509,9 +1655,14 @@ def remote_handoff_bodypaint_view(
             "transport": source_tree_transport,
             "payload": source_tree_manifest,
         },
+        "source_packet_fingerprint": {
+            "transport": source_packet_fingerprint_transport,
+            "payload": source_packet_fingerprint,
+        },
         "prepare_transport": prepare_transport,
         "existing_target_verify_result": existing_verify_result,
         "existing_target_tree_manifest": existing_tree_manifest,
+        "existing_target_packet_fingerprint": existing_target_packet_fingerprint,
         "staging_prepare_transport": staging_prepare_transport,
         "transfer": {
             "command_transport": transfer_transport,
@@ -1521,15 +1672,22 @@ def remote_handoff_bodypaint_view(
             "skipped_existing_verified": False,
             "staged_tree_hash_match": staged_tree_hash_match,
             "staged_tree_hash": staged_tree_hash,
+            "staged_stable_fingerprint": staged_stable_fingerprint,
+            "staged_stable_fingerprint_match": staged_stable_fingerprint_match,
             "tree_hash_match": tree_hash_match,
             "source_tree_hash": source_tree_hash,
             "target_tree_hash": target_tree_hash,
+            "source_stable_fingerprint": source_stable_fingerprint,
+            "target_stable_fingerprint": target_stable_fingerprint,
+            "stable_fingerprint_match": stable_fingerprint_match,
         },
         "staged_verify_result": staged_verify_result,
         "staged_tree_manifest": staged_tree_manifest_result,
+        "staged_packet_fingerprint": staged_packet_fingerprint_result,
         "promote_result": promote_result,
         "verify_result": verify_result,
         "target_tree_manifest": target_tree_manifest_result,
+        "target_packet_fingerprint": target_packet_fingerprint_result,
         "failure_stage": failure_stage,
     }
     return _finish_operator_run(conn, paths, operation_id=operation_id, status=status, payload=payload)

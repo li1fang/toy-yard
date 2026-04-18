@@ -65,7 +65,7 @@ The current BodyPaint implementation transfers into `.incoming/<operation_id>/<p
 
 ### H3: Idempotent Resume Metadata
 
-Status: `implemented for verified identical targets`
+Status: `implemented for bodypaint with stable packet fingerprint skip`
 
 Each handoff should have a stable transfer identity derived from:
 
@@ -78,15 +78,19 @@ Each handoff should have a stable transfer identity derived from:
 
 If the same transfer is retried, the operator should detect whether the target already has the verified tree.
 
-The current BodyPaint result now includes `transfer_identity.transfer_id`, derived from source host, target host, lane, profile, source tree hash, and target transfer profile. If the final target directory already exists, still passes packet-shape verification, and already matches the source tree hash, the operator skips re-transfer and returns a verified no-op result.
+The current BodyPaint result now includes `transfer_identity.transfer_id`, derived from source host, target host, lane, profile, stable packet fingerprint, and target transfer profile. If the final target directory already exists, still passes packet-shape verification, and already matches the source stable packet fingerprint, the operator skips re-transfer and returns a verified no-op result.
 
 Current limitation:
 
 - BodyPaint export still writes volatile fields such as `generated_at_utc`
 - therefore repeated exports of the same logical packet may still produce a different tree hash
-- so real-world skip behavior depends on packet byte-stability today
+- so skip/resume identity should rely on stable packet fingerprint, not raw tree hash
 
-The next practical refinement is a stable packet fingerprint that ignores approved volatile fields while keeping raw tree hashes for transport integrity.
+The current v0 stable fingerprint ignores:
+
+- `generated_at_utc`
+
+The next practical refinement after this is to move stable packet fingerprint out of the Remote Operator layer and into packet-native export metadata so consumers and operators can share the same logical identity.
 
 ### H4: Resumable Transfer Capability
 
