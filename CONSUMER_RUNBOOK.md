@@ -153,6 +153,27 @@ After review, a consumer request should end in one of four outcomes:
 
 These outcomes are enough for the first version of the process.
 
+## Consumer Confirmation Record
+
+For active consumers that have already validated a seam, a short consumer confirmation record is recommended.
+
+Recommended contents:
+
+- current compatibility conclusion
+- required fields
+- optional fields currently read
+- fields not currently used as startup blockers
+- current boundary understanding
+- whether producer-side change is currently required
+
+This is recommended, not mandatory.
+
+Why:
+
+- it gives `toy-yard` a lightweight compatibility memory
+- it reduces repeated re-discovery during later packet changes
+- it does not force every consumer into heavy process overhead
+
 ## Current Examples
 
 - `AiUE`: admitted consumer with its own execution lane

@@ -54,3 +54,9 @@ Reject direct `toy-yard` edits if:
 - `approve_new_packet_lane_trial`
 - `needs_rewrite_before_review`
 - `reject_out_of_scope`
+
+## Existing Consumer Follow-Up
+
+If the consumer is already active and confirms current compatibility, ask for a short consumer confirmation record when useful.
+
+This is recommended, not mandatory.
