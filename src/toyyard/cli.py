@@ -26,6 +26,16 @@ from toyyard.image_shadow_import import import_wallpaper_engine_catalog
 from toyyard.legacy_3dgirls import import_legacy_3dgirls
 from toyyard.motion_handoff import import_motion_handoff
 from toyyard.paths import ProjectPaths
+from toyyard.remote_operator import (
+    get_operator_node,
+    list_operator_nodes,
+    register_remote_host,
+    remote_handoff_audio_index,
+    remote_probe,
+    remote_status,
+    remote_sync_code,
+    remote_toyyard,
+)
 from toyyard.repair import repair_legacy_3dgirls_lineage
 from toyyard.reports import aiue_ready_rows, audio_catalog_rows, blocked_rows, failure_rows, image_catalog_rows, lineage_gap_rows, motion_catalog_rows, ready_rows
 from toyyard.reports import image_pick_rows
@@ -57,7 +67,7 @@ def _paths(root: str | None) -> ProjectPaths:
 def _open_db(paths: ProjectPaths):
     if not paths.db_path.exists():
         raise SystemExit(f"Database not initialized at {paths.db_path}. Run `toyyard init` first.")
-    return connect(paths.db_path)
+    return init_db(paths.db_path)
 
 
 def _print_sample_bundle(conn, sample_row) -> None:
@@ -204,6 +214,35 @@ def build_parser() -> argparse.ArgumentParser:
     repair_subparsers = repair_parser.add_subparsers(dest="repair_command", required=True)
     repair_legacy_parser = repair_subparsers.add_parser("legacy-3dgirls-lineage", help="Repair imported 3dgirls lineage in-place")
     repair_legacy_parser.add_argument("--root-id", type=int, default=None)
+
+    remote_parser = subparsers.add_parser("remote", help="Operate registered remote toy-yard nodes over SSH")
+    remote_subparsers = remote_parser.add_subparsers(dest="remote_command", required=True)
+    remote_register_parser = remote_subparsers.add_parser("register-host", help="Register one remote SSH host profile")
+    remote_register_parser.add_argument("--profile-path", required=True)
+    remote_register_parser.add_argument("--project-root", required=True)
+    remote_register_parser.add_argument("--transport-topology", default="peer_to_peer")
+    remote_subparsers.add_parser("list-hosts", help="List registered remote operator hosts")
+    remote_probe_parser = remote_subparsers.add_parser("probe", help="Run one SSH reachability probe")
+    remote_probe_parser.add_argument("--host", required=True)
+    remote_status_parser = remote_subparsers.add_parser("status", help="Inspect remote project/runtime status")
+    remote_status_parser.add_argument("--host", required=True)
+    remote_sync_parser = remote_subparsers.add_parser("sync-code", help="Fetch/pull one remote repo and optionally refresh install")
+    remote_sync_parser.add_argument("--host", required=True)
+    remote_sync_parser.add_argument("--branch", required=True)
+    remote_sync_parser.add_argument("--install-editable", action="store_true")
+    remote_toyyard_parser = remote_subparsers.add_parser("toyyard", help="Run one approved remote toyyard command")
+    remote_toyyard_parser.add_argument("--host", required=True)
+    remote_toyyard_parser.add_argument("toyyard_args", nargs=argparse.REMAINDER)
+
+    remote_handoff_parser = remote_subparsers.add_parser("handoff", help="Run one remote packet handoff flow")
+    remote_handoff_subparsers = remote_handoff_parser.add_subparsers(dest="remote_handoff_command", required=True)
+    remote_handoff_audio_parser = remote_handoff_subparsers.add_parser("audio-index", help="Run one peer-to-peer audio index packet handoff")
+    remote_handoff_audio_parser.add_argument("--source-host", required=True)
+    remote_handoff_audio_parser.add_argument("--target-host", required=True)
+    remote_handoff_audio_parser.add_argument("--session-id", required=True)
+    remote_handoff_audio_parser.add_argument("--source-node-id", required=True)
+    remote_handoff_audio_parser.add_argument("--target-transfer-profile", required=True)
+    remote_handoff_audio_parser.add_argument("--import-target", action="store_true")
 
     return parser
 
@@ -690,6 +729,87 @@ def cmd_repair_legacy_3dgirls_lineage(paths: ProjectPaths) -> int:
     return 0
 
 
+def cmd_remote_register_host(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = register_remote_host(
+        conn,
+        paths,
+        profile_path=Path(args.profile_path),
+        project_root=args.project_root,
+        transport_topology=args.transport_topology,
+    )
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_list_hosts(paths: ProjectPaths) -> int:
+    conn = _open_db(paths)
+    rows = []
+    for row in list_operator_nodes(conn):
+        payload = dict(row)
+        payload["metadata_json"] = json.loads(payload.get("metadata_json") or "{}")
+        rows.append(payload)
+    conn.close()
+    print(json.dumps(rows, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_probe(paths: ProjectPaths, host: str) -> int:
+    conn = _open_db(paths)
+    result = remote_probe(conn, paths, host_ref=host)
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_status(paths: ProjectPaths, host: str) -> int:
+    conn = _open_db(paths)
+    result = remote_status(conn, paths, host_ref=host)
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_sync_code(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = remote_sync_code(
+        conn,
+        paths,
+        host_ref=args.host,
+        branch=args.branch,
+        install_editable=bool(args.install_editable),
+    )
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_toyyard(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = remote_toyyard(conn, paths, host_ref=args.host, toyyard_args=args.toyyard_args)
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_remote_handoff_audio_index(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = remote_handoff_audio_index(
+        conn,
+        paths,
+        source_host_ref=args.source_host,
+        target_host_ref=args.target_host,
+        session_id=args.session_id,
+        source_node_id=args.source_node_id,
+        target_transfer_profile=args.target_transfer_profile,
+        import_target=bool(args.import_target),
+    )
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -765,6 +885,20 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_report_communication_signal(paths, args.lane, args.profile)
     if args.command == "repair" and args.repair_command == "legacy-3dgirls-lineage":
         return cmd_repair_legacy_3dgirls_lineage(paths)
+    if args.command == "remote" and args.remote_command == "register-host":
+        return cmd_remote_register_host(paths, args)
+    if args.command == "remote" and args.remote_command == "list-hosts":
+        return cmd_remote_list_hosts(paths)
+    if args.command == "remote" and args.remote_command == "probe":
+        return cmd_remote_probe(paths, args.host)
+    if args.command == "remote" and args.remote_command == "status":
+        return cmd_remote_status(paths, args.host)
+    if args.command == "remote" and args.remote_command == "sync-code":
+        return cmd_remote_sync_code(paths, args)
+    if args.command == "remote" and args.remote_command == "toyyard":
+        return cmd_remote_toyyard(paths, args)
+    if args.command == "remote" and args.remote_command == "handoff" and args.remote_handoff_command == "audio-index":
+        return cmd_remote_handoff_audio_index(paths, args)
 
     parser.print_help()
     return 1

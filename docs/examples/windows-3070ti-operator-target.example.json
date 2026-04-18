@@ -1,0 +1,50 @@
+{
+  "schema_version": "ssh_host_profile_v1",
+  "document_role": "machine_readable_ssh_host_profile",
+  "profile_name": "windows-3070ti-operator-target",
+  "is_example": true,
+  "node": {
+    "node_id": "windows-gpu-3070ti-01",
+    "display_name": "Windows 3070 Ti Host",
+    "owner_side": "windows",
+    "os_family": "windows",
+    "shell_family": "powershell",
+    "path_style": "windows"
+  },
+  "network": {
+    "primary_hostname": "light",
+    "primary_ipv4": "192.168.1.44"
+  },
+  "ssh": {
+    "transport": "ssh",
+    "port": 22,
+    "username": "garro",
+    "host_key_verification": {
+      "required": true,
+      "known_hosts_path": "C:/Users/garro/.ssh/vcompose-fabric-known_hosts"
+    },
+    "auth": {
+      "supported_methods": ["publickey"],
+      "preferred_method": "publickey",
+      "credential_ref": {
+        "kind": "ssh_key_file",
+        "secret_id": "windows-3070ti-lan",
+        "local_path": "C:/Users/garro/.ssh/vcompose-fabric-mesh",
+        "linux_path": "~/.ssh/windows-3070ti-lan"
+      }
+    }
+  },
+  "filesystem": {
+    "scp_path_style": "windows_drive",
+    "preferred_upload_directory": "C:/Projects/toy-yard/_exchange/index_packets"
+  },
+  "transfer_profiles": [
+    {
+      "profile_id": "toy_yard_index_packets",
+      "purpose": "Toy-Yard packet inbox on the Windows runtime node",
+      "remote_directory": "C:/Projects/toy-yard/_exchange/index_packets",
+      "path_style": "windows_drive",
+      "create_if_missing": false
+    }
+  ]
+}

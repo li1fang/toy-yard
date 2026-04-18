@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toy-yard.local/contracts/ssh_host_profile_v1.schema.json",
+  "title": "ssh_host_profile_v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "document_role",
+    "profile_name",
+    "node",
+    "network",
+    "ssh",
+    "filesystem",
+    "transfer_profiles"
+  ],
+  "properties": {
+    "schema_version": { "const": "ssh_host_profile_v1" },
+    "document_role": { "const": "machine_readable_ssh_host_profile" },
+    "profile_name": { "type": "string", "minLength": 1 },
+    "node": {
+      "type": "object",
+      "required": ["node_id", "os_family", "shell_family", "path_style"],
+      "properties": {
+        "node_id": { "type": "string", "minLength": 1 },
+        "display_name": { "type": "string" },
+        "owner_side": { "type": "string" },
+        "os_family": { "enum": ["linux", "windows", "macos"] },
+        "shell_family": { "enum": ["bash", "powershell", "zsh"] },
+        "path_style": { "enum": ["posix", "windows"] }
+      },
+      "additionalProperties": true
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "primary_hostname": { "type": "string" },
+        "primary_ipv4": { "type": "string" },
+        "primary_ipv6": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["primary_hostname"] },
+        { "required": ["primary_ipv4"] }
+      ],
+      "additionalProperties": true
+    },
+    "ssh": {
+      "type": "object",
+      "required": ["transport", "port", "username", "auth"],
+      "properties": {
+        "transport": { "const": "ssh" },
+        "port": { "type": "integer", "minimum": 1 },
+        "username": { "type": "string", "minLength": 1 },
+        "host_key_verification": { "type": "object" },
+        "auth": {
+          "type": "object",
+          "required": ["supported_methods", "preferred_method", "credential_ref"],
+          "properties": {
+            "supported_methods": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "preferred_method": { "type": "string" },
+            "credential_ref": {
+              "type": "object",
+              "required": ["kind"],
+              "properties": {
+                "kind": { "enum": ["ssh_key_file", "ssh_config_host", "env_var", "ssh_agent"] },
+                "secret_id": { "type": "string" },
+                "local_path": { "type": "string" },
+                "linux_path": { "type": "string" },
+                "windows_path": { "type": "string" },
+                "ssh_config_host": { "type": "string" }
+              },
+              "additionalProperties": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "filesystem": {
+      "type": "object",
+      "required": ["scp_path_style"],
+      "properties": {
+        "scp_path_style": { "enum": ["posix", "windows_drive", "cygdrive"] },
+        "preferred_upload_directory": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "transfer_profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["profile_id", "remote_directory", "path_style"],
+        "properties": {
+          "profile_id": { "type": "string", "minLength": 1 },
+          "purpose": { "type": "string" },
+          "remote_directory": { "type": "string", "minLength": 1 },
+          "path_style": { "type": "string", "minLength": 1 },
+          "create_if_missing": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -87,6 +87,14 @@ class ProjectPaths:
     def index_packet_root(self) -> Path:
         return self.exchange_root / "index_packets"
 
+    @property
+    def operator_hosts_dir(self) -> Path:
+        return self.exchange_root / "operator_hosts"
+
+    @property
+    def operator_runs_dir(self) -> Path:
+        return self.exchange_root / "operator_runs"
+
     def ensure_layout(self) -> None:
         for rel in DIRECTORY_LAYOUT:
             (self.root / rel).mkdir(parents=True, exist_ok=True)
@@ -271,6 +279,12 @@ class ProjectPaths:
 
     def audio_index_packet_path(self, node_id: str, session_id: str) -> Path:
         return self.index_packet_root / f"audio__{slugify(node_id)}__{slugify(session_id)}.json"
+
+    def operator_host_profile_path(self, profile_name: str) -> Path:
+        return self.operator_hosts_dir / f"{slugify(profile_name)}.ssh-info.json"
+
+    def operator_run_result_path(self, operation_id: str) -> Path:
+        return self.operator_runs_dir / f"{slugify(operation_id)}.json"
 
     def triage_marker_path(self, bucket: str, package_id: int) -> Path:
         return self.root / "02_triage" / bucket / f"package_{package_id}.json"

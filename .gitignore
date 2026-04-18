@@ -16,6 +16,7 @@ env/
 
 # Local databases and generated state
 _db/
+_exchange/
 
 # Working warehouse zones
 00_inbox/

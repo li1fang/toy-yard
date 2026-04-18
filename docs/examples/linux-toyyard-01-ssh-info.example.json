@@ -1,0 +1,49 @@
+{
+  "schema_version": "ssh_host_profile_v1",
+  "document_role": "machine_readable_ssh_host_profile",
+  "profile_name": "linux-toyyard-01",
+  "is_example": true,
+  "node": {
+    "node_id": "linux-toyyard-01",
+    "display_name": "Linux Toy-Yard Node 01",
+    "owner_side": "linux",
+    "os_family": "linux",
+    "shell_family": "bash",
+    "path_style": "posix"
+  },
+  "network": {
+    "primary_hostname": "linux-toyyard-01.local",
+    "primary_ipv4": "192.168.1.50"
+  },
+  "ssh": {
+    "transport": "ssh",
+    "port": 22,
+    "username": "whipz",
+    "host_key_verification": {
+      "required": true,
+      "known_hosts_path": "C:/Users/garro/.ssh/vcompose-fabric-known_hosts"
+    },
+    "auth": {
+      "supported_methods": ["publickey"],
+      "preferred_method": "publickey",
+      "credential_ref": {
+        "kind": "ssh_key_file",
+        "secret_id": "vcompose-fabric-mesh",
+        "local_path": "C:/Users/garro/.ssh/vcompose-fabric-mesh"
+      }
+    }
+  },
+  "filesystem": {
+    "scp_path_style": "posix",
+    "preferred_upload_directory": "/srv/toy-yard/_exchange/index_packets"
+  },
+  "transfer_profiles": [
+    {
+      "profile_id": "toy_yard_index_packets",
+      "purpose": "Toy-Yard packet inbox on the Linux runtime node",
+      "remote_directory": "/srv/toy-yard/_exchange/index_packets",
+      "path_style": "posix",
+      "create_if_missing": false
+    }
+  ]
+}

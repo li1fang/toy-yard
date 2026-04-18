@@ -178,6 +178,31 @@ CREATE TABLE IF NOT EXISTS report_imports (
   UNIQUE(root_id, report_path)
 );
 
+CREATE TABLE IF NOT EXISTS operator_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id TEXT NOT NULL UNIQUE,
+  profile_name TEXT NOT NULL UNIQUE,
+  ssh_info_path TEXT NOT NULL,
+  project_root TEXT NOT NULL,
+  os_family TEXT NOT NULL,
+  shell_family TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'registered',
+  transport_topology TEXT NOT NULL DEFAULT 'peer_to_peer',
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS operator_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation_id TEXT NOT NULL UNIQUE,
+  node_id TEXT NOT NULL,
+  operation_kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  result_path TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS source_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -231,6 +256,9 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_owner
 
 CREATE INDEX IF NOT EXISTS idx_source_links_entity
   ON source_links(entity_type, entity_id);
+
+CREATE INDEX IF NOT EXISTS idx_operator_runs_node
+  ON operator_runs(node_id, operation_kind, started_at);
 """
 
 
