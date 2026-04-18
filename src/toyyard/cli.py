@@ -29,6 +29,7 @@ from toyyard.paths import ProjectPaths
 from toyyard.remote_operator import (
     get_operator_node,
     list_operator_nodes,
+    remote_handoff_bodypaint_view,
     register_remote_host,
     remote_handoff_audio_index,
     remote_probe,
@@ -186,6 +187,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_bodypaint_parser.add_argument("--sample", default=None)
     export_bodypaint_parser.add_argument("--package", dest="packages", action="append", default=[])
     export_bodypaint_parser.add_argument("--aiue-pmx-profile", default=None)
+    export_bodypaint_parser.add_argument("--json", action="store_true")
     export_audio_index_parser = export_subparsers.add_parser("audio-index-packet", help="Export one canonical audio session as an index-only packet for SSH replication")
     export_audio_index_parser.add_argument("--session-id", required=True)
     export_audio_index_parser.add_argument("--node-id", required=True)
@@ -243,6 +245,14 @@ def build_parser() -> argparse.ArgumentParser:
     remote_handoff_audio_parser.add_argument("--source-node-id", required=True)
     remote_handoff_audio_parser.add_argument("--target-transfer-profile", required=True)
     remote_handoff_audio_parser.add_argument("--import-target", action="store_true")
+    remote_handoff_bodypaint_parser = remote_handoff_subparsers.add_parser("bodypaint-view", help="Run one peer-to-peer BodyPaint export handoff")
+    remote_handoff_bodypaint_parser.add_argument("--source-host", required=True)
+    remote_handoff_bodypaint_parser.add_argument("--target-host", required=True)
+    remote_handoff_bodypaint_parser.add_argument("--profile", required=True)
+    remote_handoff_bodypaint_parser.add_argument("--sample", default=None)
+    remote_handoff_bodypaint_parser.add_argument("--package", dest="packages", action="append", default=[])
+    remote_handoff_bodypaint_parser.add_argument("--aiue-pmx-profile", default=None)
+    remote_handoff_bodypaint_parser.add_argument("--target-transfer-profile", required=True)
 
     return parser
 
@@ -596,6 +606,10 @@ def cmd_export_bodypaint_view(paths: ProjectPaths, args: argparse.Namespace) -> 
         package_refs=args.packages,
         aiue_pmx_profile=args.aiue_pmx_profile,
     )
+    if bool(args.json):
+        print(json.dumps(result, ensure_ascii=True))
+        conn.close()
+        return 0
     print_rows(
         [
             {
@@ -810,6 +824,24 @@ def cmd_remote_handoff_audio_index(paths: ProjectPaths, args: argparse.Namespace
     return 0
 
 
+def cmd_remote_handoff_bodypaint_view(paths: ProjectPaths, args: argparse.Namespace) -> int:
+    conn = _open_db(paths)
+    result = remote_handoff_bodypaint_view(
+        conn,
+        paths,
+        source_host_ref=args.source_host,
+        target_host_ref=args.target_host,
+        profile=args.profile,
+        sample_ref=args.sample,
+        package_refs=args.packages,
+        aiue_pmx_profile=args.aiue_pmx_profile,
+        target_transfer_profile=args.target_transfer_profile,
+    )
+    conn.close()
+    print(json.dumps(result, ensure_ascii=True, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -899,6 +931,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_remote_toyyard(paths, args)
     if args.command == "remote" and args.remote_command == "handoff" and args.remote_handoff_command == "audio-index":
         return cmd_remote_handoff_audio_index(paths, args)
+    if args.command == "remote" and args.remote_command == "handoff" and args.remote_handoff_command == "bodypaint-view":
+        return cmd_remote_handoff_bodypaint_view(paths, args)
 
     parser.print_help()
     return 1

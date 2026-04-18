@@ -73,6 +73,8 @@ DIRECTORY_LAYOUT = (
     "05_publish/audio",
     "05_publish/bodypaint",
     "_exchange/index_packets",
+    "_exchange/consumer_packets",
+    "_exchange/consumer_packets/bodypaint",
     "_exchange/operator_hosts",
     "_exchange/operator_runs",
     "90_reject/classify_failed",

@@ -17,6 +17,7 @@ from toyyard.warehouse import json_merge
 SSH_HOST_PROFILE_SCHEMA = "ssh_host_profile_v1"
 REMOTE_OPERATION_RESULT_SCHEMA = "remote_operation_result_v0"
 REMOTE_HANDOFF_RESULT_SCHEMA = "remote_handoff_result_v0"
+REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA = "remote_export_handoff_result_v0"
 DEFAULT_TRANSPORT_TOPOLOGY = "peer_to_peer"
 
 ALLOWED_TOYYARD_TOP_LEVEL = {"init", "report", "inspect", "export", "import"}
@@ -261,6 +262,23 @@ def _transfer_profile(profile: dict[str, Any], profile_id: str) -> dict[str, Any
     raise ValueError(f"Unknown transfer profile `{profile_id}` for host {profile.get('profile_name')}")
 
 
+def _join_remote_path(profile: dict[str, Any], base_dir: str, leaf: str) -> str:
+    base = str(base_dir or "").rstrip("/\\")
+    tail = str(leaf or "").strip("/\\")
+    path_style = str(profile.get("node", {}).get("path_style") or "posix")
+    if "/" in base and "\\" not in base:
+        sep = "/"
+    elif "\\" in base and "/" not in base:
+        sep = "\\"
+    else:
+        sep = "\\" if path_style == "windows" else "/"
+    if not base:
+        return tail
+    if not tail:
+        return base
+    return base + sep + tail
+
+
 def _quote_ps(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -300,6 +318,73 @@ def _ssh_argv(profile: dict[str, Any], remote_command: str) -> list[str]:
     argv.append(_profile_runtime_destination(profile))
     argv.extend(_remote_shell_command(profile, remote_command))
     return argv
+
+
+def _scp_command_from_source(
+    *,
+    source_profile: dict[str, Any],
+    target_profile: dict[str, Any],
+    source_path: str,
+    target_path: str,
+    recursive: bool = False,
+) -> str:
+    source_shell = str(source_profile.get("node", {}).get("shell_family") or "")
+    peer_key_path = _peer_credential_path_for_source(target_profile, source_shell)
+    if not peer_key_path:
+        raise ValueError(
+            f"Target host profile `{target_profile.get('profile_name')}` is missing source-side credential path for {source_shell} scp."
+        )
+
+    target_host_name = str(target_profile.get("network", {}).get("primary_ipv4") or target_profile.get("network", {}).get("primary_hostname") or "")
+    target_user = str(target_profile.get("ssh", {}).get("username") or "")
+    target_port = str(target_profile.get("ssh", {}).get("port") or 22)
+    destination = f"{target_user}@{target_host_name}:{target_path}"
+    host_verification = dict(target_profile.get("ssh", {}).get("host_key_verification") or {})
+    source_known_hosts = host_verification.get("source_known_hosts_path") or host_verification.get("known_hosts_path")
+
+    if source_shell == "bash":
+        parts = ["scp"]
+        if recursive:
+            parts.append("-r")
+        parts.extend(
+            [
+                "-P",
+                target_port,
+                "-i",
+                shlex.quote(str(peer_key_path)),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=yes",
+            ]
+        )
+        if source_known_hosts:
+            parts.extend(["-o", f"UserKnownHostsFile={source_known_hosts}"])
+        parts.extend([shlex.quote(source_path), shlex.quote(destination)])
+        return " ".join(parts)
+
+    if source_shell == "powershell":
+        parts = ["scp"]
+        if recursive:
+            parts.append("-r")
+        parts.extend(
+            [
+                "-P",
+                target_port,
+                "-i",
+                _quote_ps(str(peer_key_path)),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=yes",
+            ]
+        )
+        if source_known_hosts:
+            parts.extend(["-o", _quote_ps(f"UserKnownHostsFile={source_known_hosts}")])
+        parts.extend([_quote_ps(source_path), _quote_ps(destination)])
+        return " ".join(parts)
+
+    raise ValueError(f"Unsupported source shell for scp handoff: {source_shell}")
 
 
 def _run_subprocess(argv: list[str], *, timeout: int = 120) -> dict[str, Any]:
@@ -343,6 +428,17 @@ def _remote_python_command(
     return prefix + _python_exec_fragment(python_exe, python_code, shell_family)
 
 
+def _ensure_remote_directory(profile: dict[str, Any], remote_dir: str) -> dict[str, Any]:
+    shell_family = str(profile.get("node", {}).get("shell_family") or "")
+    if shell_family == "bash":
+        command = f"mkdir -p {shlex.quote(remote_dir)}"
+    elif shell_family == "powershell":
+        command = f"New-Item -ItemType Directory -Force -Path {_quote_ps(remote_dir)} | Out-Null"
+    else:
+        raise ValueError(f"Unsupported shell family: {shell_family}")
+    return _run_subprocess(_ssh_argv(profile, command), timeout=120)
+
+
 def _status_python_code() -> str:
     return """
 import json, os, pathlib, subprocess, sys
@@ -380,6 +476,44 @@ payload = {
     'toyyard_entry': str(repo_root / 'toyyard.py'),
     'toyyard_entry_exists': (repo_root / 'toyyard.py').exists(),
 }
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
+def _verify_bodypaint_export_python_code(export_root: str) -> str:
+    return f"""
+import json, pathlib
+export_root = pathlib.Path({export_root!r})
+summary_dir = export_root / 'summary'
+paths = {{
+    'summary_path': summary_dir / 'bodypaint_suite_summary.json',
+    'registry_path': summary_dir / 'bodypaint_packet_registry.json',
+    'packet_check_path': summary_dir / 'bodypaint_packet_check.json',
+    'communication_signal_path': summary_dir / 'communication_signal.json',
+}}
+payload = {{
+    'export_root': str(export_root),
+    'required_files': {{name: path.exists() for name, path in paths.items()}},
+    'registry_packet_count': 0,
+    'packet_check_status': '',
+    'communication_signal_status': '',
+}}
+if paths['registry_path'].exists():
+    registry = json.loads(paths['registry_path'].read_text(encoding='utf-8-sig'))
+    payload['registry_packet_count'] = len(registry.get('packets') or [])
+if paths['packet_check_path'].exists():
+    packet_check = json.loads(paths['packet_check_path'].read_text(encoding='utf-8-sig'))
+    payload['packet_check_status'] = str(packet_check.get('status') or '')
+if paths['communication_signal_path'].exists():
+    signal = json.loads(paths['communication_signal_path'].read_text(encoding='utf-8-sig'))
+    payload['communication_signal_status'] = str(signal.get('status') or '')
+payload['acceptance'] = {{
+    'summary_exists': payload['required_files']['summary_path'],
+    'registry_exists': payload['required_files']['registry_path'],
+    'packet_check_exists': payload['required_files']['packet_check_path'],
+    'communication_signal_exists': payload['required_files']['communication_signal_path'],
+    'has_packets': payload['registry_packet_count'] > 0,
+}}
 print(json.dumps(payload, ensure_ascii=True))
 """.strip()
 
@@ -914,6 +1048,166 @@ def remote_handoff_audio_index(
             "target_packet_sha256": target_hash,
         },
         "target_import_result": target_import_result,
+        "verify_result": verify_result,
+        "failure_stage": failure_stage,
+    }
+    return _finish_operator_run(conn, paths, operation_id=operation_id, status=status, payload=payload)
+
+
+def remote_handoff_bodypaint_view(
+    conn: sqlite3.Connection,
+    paths: ProjectPaths,
+    *,
+    source_host_ref: str,
+    target_host_ref: str,
+    profile: str,
+    sample_ref: str | None = None,
+    package_refs: list[str] | None = None,
+    aiue_pmx_profile: str | None = None,
+    target_transfer_profile: str,
+) -> dict[str, Any]:
+    source_host = get_operator_node(conn, source_host_ref)
+    target_host = get_operator_node(conn, target_host_ref)
+    source_profile = load_ssh_host_profile(Path(source_host["ssh_info_path"]))
+    target_profile = load_ssh_host_profile(Path(target_host["ssh_info_path"]))
+    package_refs = [str(ref) for ref in (package_refs or []) if str(ref).strip()]
+    if not sample_ref and not package_refs:
+        raise ValueError("BodyPaint handoff requires --sample or at least one --package.")
+
+    operation_id, started_at = _begin_operator_run(
+        conn,
+        paths,
+        node_id=str(source_host["node_id"]),
+        operation_kind="remote_handoff_bodypaint_view",
+        metadata={
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "sample_ref": sample_ref or "",
+            "package_refs": package_refs,
+            "aiue_pmx_profile": aiue_pmx_profile or "",
+        },
+    )
+
+    export_args = ["export", "bodypaint-view", "--profile", profile, "--json"]
+    if sample_ref:
+        export_args.extend(["--sample", sample_ref])
+    for package_ref in package_refs:
+        export_args.extend(["--package", package_ref])
+    if aiue_pmx_profile:
+        export_args.extend(["--aiue-pmx-profile", aiue_pmx_profile])
+
+    export_result = remote_toyyard(
+        conn,
+        paths,
+        host_ref=source_host_ref,
+        toyyard_args=export_args,
+    )
+    export_json = dict(export_result.get("parsed_json") or {})
+    export_root = str(export_json.get("export_root") or "").strip()
+    if export_result["status"] != "pass" or not export_root:
+        payload = {
+            "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+            "operation_id": operation_id,
+            "operation_kind": "bodypaint_view_handoff",
+            "lane": "bodypaint",
+            "status": "fail",
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "export_result": export_result,
+            "failure_stage": "export",
+        }
+        return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
+
+    target_transfer = _transfer_profile(target_profile, target_transfer_profile)
+    target_dir = str(target_transfer.get("remote_directory") or "").strip()
+    if not target_dir:
+        raise ValueError(f"Target transfer profile `{target_transfer_profile}` is missing remote_directory.")
+
+    prepare_transport: dict[str, Any] | None = None
+    if bool(target_transfer.get("create_if_missing")):
+        prepare_transport = _ensure_remote_directory(target_profile, target_dir)
+        if prepare_transport["returncode"] != 0:
+            payload = {
+                "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+                "operation_id": operation_id,
+                "operation_kind": "bodypaint_view_handoff",
+                "lane": "bodypaint",
+                "status": "fail",
+                "started_at": started_at,
+                "ended_at": now_iso(),
+                "source_host": source_host["profile_name"],
+                "target_host": target_host["profile_name"],
+                "profile": profile,
+                "export_result": export_result,
+                "target_transfer_profile": target_transfer_profile,
+                "prepare_transport": prepare_transport,
+                "failure_stage": "target_prepare",
+            }
+            return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
+
+    profile_leaf = Path(export_root).name
+    target_export_root = _join_remote_path(target_profile, target_dir, profile_leaf)
+    scp_command = _scp_command_from_source(
+        source_profile=source_profile,
+        target_profile=target_profile,
+        source_path=export_root,
+        target_path=str(target_dir.rstrip("/\\")) + ("/" if "/" in target_dir or "\\" not in target_dir else "\\"),
+        recursive=True,
+    )
+    transfer_transport = _run_subprocess(_ssh_argv(source_profile, scp_command), timeout=600)
+
+    verify_result: dict[str, Any] | None = None
+    if transfer_transport["returncode"] == 0:
+        verify_command = _remote_python_command(
+            target_profile,
+            python_code=_verify_bodypaint_export_python_code(target_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        verify_transport = _run_subprocess(_ssh_argv(target_profile, verify_command), timeout=120)
+        verify_payload: dict[str, Any] = {}
+        if verify_transport["returncode"] == 0 and str(verify_transport["stdout"]).strip():
+            verify_payload = json.loads(str(verify_transport["stdout"]).strip().splitlines()[-1])
+        verify_result = {
+            "transport": verify_transport,
+            "payload": verify_payload,
+            "acceptance": dict(verify_payload.get("acceptance") or {}),
+        }
+
+    status = "pass"
+    failure_stage = ""
+    if transfer_transport["returncode"] != 0:
+        status = "fail"
+        failure_stage = "transfer"
+    elif not verify_result or not all(bool(value) for value in verify_result.get("acceptance", {}).values()):
+        status = "fail"
+        failure_stage = "target_verify"
+
+    payload = {
+        "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+        "operation_id": operation_id,
+        "operation_kind": "bodypaint_view_handoff",
+        "lane": "bodypaint",
+        "status": status,
+        "started_at": started_at,
+        "ended_at": now_iso(),
+        "source_host": source_host["profile_name"],
+        "target_host": target_host["profile_name"],
+        "profile": profile,
+        "sample_ref": sample_ref or "",
+        "package_refs": package_refs,
+        "aiue_pmx_profile": aiue_pmx_profile or "",
+        "target_transfer_profile": target_transfer_profile,
+        "export_result": export_result,
+        "source_export_root": export_root,
+        "prepare_transport": prepare_transport,
+        "transfer": {
+            "command_transport": transfer_transport,
+            "target_export_root": target_export_root,
+        },
         "verify_result": verify_result,
         "failure_stage": failure_stage,
     }

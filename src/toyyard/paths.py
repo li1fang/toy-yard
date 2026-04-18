@@ -88,6 +88,14 @@ class ProjectPaths:
         return self.exchange_root / "index_packets"
 
     @property
+    def consumer_packets_root(self) -> Path:
+        return self.exchange_root / "consumer_packets"
+
+    @property
+    def bodypaint_handoff_root(self) -> Path:
+        return self.consumer_packets_root / "bodypaint"
+
+    @property
     def operator_hosts_dir(self) -> Path:
         return self.exchange_root / "operator_hosts"
 

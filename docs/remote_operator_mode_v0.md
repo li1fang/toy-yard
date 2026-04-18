@@ -142,6 +142,11 @@ These actions are in scope for direct remote execution.
 - verify inbox/outbox paths
 - run import on the receiving node
 
+Current wrappers now split into two shapes:
+
+- `audio-index`: export one index packet, transfer it, then import it on the target node
+- `bodypaint-view`: export one publish profile directory, transfer it, then verify the target packet shape
+
 ### D. Read-Only Diagnostics
 
 - inspect logs

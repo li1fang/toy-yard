@@ -45,6 +45,13 @@
       "remote_directory": "C:/Projects/toy-yard/_exchange/index_packets",
       "path_style": "windows_drive",
       "create_if_missing": false
+    },
+    {
+      "profile_id": "toy_yard_bodypaint_packets",
+      "purpose": "Toy-Yard BodyPaint export drop for remote handoff",
+      "remote_directory": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint",
+      "path_style": "windows_drive",
+      "create_if_missing": true
     }
   ]
 }

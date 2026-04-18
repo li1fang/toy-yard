@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toy-yard.local/contracts/remote_export_handoff_result_v0.schema.json",
+  "title": "remote_export_handoff_result_v0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation_id",
+    "operation_kind",
+    "lane",
+    "status",
+    "started_at",
+    "ended_at",
+    "source_host",
+    "target_host",
+    "profile"
+  ],
+  "properties": {
+    "schema_version": { "const": "remote_export_handoff_result_v0" },
+    "operation_id": { "type": "string" },
+    "operation_kind": { "type": "string" },
+    "lane": { "type": "string" },
+    "status": { "enum": ["pass", "fail"] },
+    "started_at": { "type": "string" },
+    "ended_at": { "type": "string" },
+    "source_host": { "type": "string" },
+    "target_host": { "type": "string" },
+    "profile": { "type": "string" },
+    "sample_ref": { "type": "string" },
+    "package_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "target_transfer_profile": { "type": "string" },
+    "export_result": { "type": "object" },
+    "prepare_transport": { "type": ["object", "null"] },
+    "transfer": { "type": "object" },
+    "verify_result": { "type": ["object", "null"] },
+    "failure_stage": { "type": "string" }
+  },
+  "additionalProperties": true
+}
