@@ -1271,6 +1271,83 @@ def remote_handoff_bodypaint_view(
             }
             return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
+    existing_verify_command = _remote_python_command(
+        target_profile,
+        python_code=_verify_bodypaint_export_python_code(target_export_root),
+        project_root=str(target_host["project_root"]),
+    )
+    existing_verify_transport = _run_subprocess(_ssh_argv(target_profile, existing_verify_command), timeout=120)
+    existing_verify_payload: dict[str, Any] = _parse_last_json_stdout(existing_verify_transport) if existing_verify_transport["returncode"] == 0 else {}
+    existing_verify_result = {
+        "transport": existing_verify_transport,
+        "payload": existing_verify_payload,
+        "acceptance": dict(existing_verify_payload.get("acceptance") or {}),
+    }
+    existing_tree_command = _remote_python_command(
+        target_profile,
+        python_code=_directory_tree_manifest_python_code(target_export_root),
+        project_root=str(target_host["project_root"]),
+    )
+    existing_tree_transport = _run_subprocess(_ssh_argv(target_profile, existing_tree_command), timeout=300)
+    existing_tree_payload = _parse_last_json_stdout(existing_tree_transport) if existing_tree_transport["returncode"] == 0 else {}
+    existing_tree_manifest = {
+        "transport": existing_tree_transport,
+        "payload": existing_tree_payload,
+    }
+    existing_target_hash = str(existing_tree_payload.get("tree_hash") or "")
+    existing_acceptance_ok = all(bool(value) for value in existing_verify_result.get("acceptance", {}).values())
+    skip_existing_verified = bool(
+        existing_verify_transport["returncode"] == 0
+        and existing_tree_transport["returncode"] == 0
+        and existing_acceptance_ok
+        and source_tree_manifest.get("tree_hash")
+        and existing_target_hash == str(source_tree_manifest.get("tree_hash") or "")
+    )
+
+    if skip_existing_verified:
+        payload = {
+            "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+            "operation_id": operation_id,
+            "operation_kind": "bodypaint_view_handoff",
+            "lane": "bodypaint",
+            "status": "pass",
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "sample_ref": sample_ref or "",
+            "package_refs": package_refs,
+            "aiue_pmx_profile": aiue_pmx_profile or "",
+            "target_transfer_profile": target_transfer_profile,
+            "transfer_identity": {
+                "transfer_id": transfer_id,
+                "identity_material": json.loads(transfer_identity_material),
+            },
+            "export_result": export_result,
+            "source_export_root": export_root,
+            "source_tree_manifest": {
+                "transport": source_tree_transport,
+                "payload": source_tree_manifest,
+            },
+            "prepare_transport": prepare_transport,
+            "existing_target_verify_result": existing_verify_result,
+            "existing_target_tree_manifest": existing_tree_manifest,
+            "transfer": {
+                "command_transport": None,
+                "target_export_root": target_export_root,
+                "skipped_existing_verified": True,
+                "skip_reason": "verified_target_tree_already_matches_source",
+                "source_tree_hash": str(source_tree_manifest.get("tree_hash") or ""),
+                "target_tree_hash": existing_target_hash,
+                "tree_hash_match": True,
+            },
+            "verify_result": existing_verify_result,
+            "target_tree_manifest": existing_tree_manifest,
+            "failure_stage": "",
+        }
+        return _finish_operator_run(conn, paths, operation_id=operation_id, status="pass", payload=payload)
+
     staging_prepare_transport = _ensure_remote_directory(target_profile, staging_operation_root)
     if staging_prepare_transport["returncode"] != 0:
         payload = {
@@ -1433,12 +1510,15 @@ def remote_handoff_bodypaint_view(
             "payload": source_tree_manifest,
         },
         "prepare_transport": prepare_transport,
+        "existing_target_verify_result": existing_verify_result,
+        "existing_target_tree_manifest": existing_tree_manifest,
         "staging_prepare_transport": staging_prepare_transport,
         "transfer": {
             "command_transport": transfer_transport,
             "target_export_root": target_export_root,
             "target_staging_root": target_staged_export_root,
             "staging_operation_root": staging_operation_root,
+            "skipped_existing_verified": False,
             "staged_tree_hash_match": staged_tree_hash_match,
             "staged_tree_hash": staged_tree_hash,
             "tree_hash_match": tree_hash_match,

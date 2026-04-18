@@ -36,6 +36,8 @@
     "export_result": { "type": "object" },
     "source_tree_manifest": { "type": "object" },
     "prepare_transport": { "type": ["object", "null"] },
+    "existing_target_verify_result": { "type": ["object", "null"] },
+    "existing_target_tree_manifest": { "type": ["object", "null"] },
     "staging_prepare_transport": { "type": ["object", "null"] },
     "transfer": { "type": "object" },
     "staged_verify_result": { "type": ["object", "null"] },
