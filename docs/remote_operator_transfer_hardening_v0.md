@@ -45,7 +45,7 @@ This catches partial or corrupted directory transfers even when `scp -r` exits s
 
 ### H2: Atomic Target Staging
 
-Status: `planned`
+Status: `implemented for bodypaint-view`
 
 Directory handoff should write into:
 
@@ -61,9 +61,11 @@ Then, only after shape and hash verification pass, promote to:
 
 Failed staging directories should be retained with a run id, not silently deleted.
 
+The current BodyPaint implementation transfers into `.incoming/<operation_id>/<profile>/`, verifies staged shape/hash, then promotes that staged directory to the consumer-visible profile directory. If the final directory already exists, it is moved aside under `.previous/<operation_id>` before promotion.
+
 ### H3: Idempotent Resume Metadata
 
-Status: `planned`
+Status: `partially implemented`
 
 Each handoff should have a stable transfer identity derived from:
 
@@ -75,6 +77,8 @@ Each handoff should have a stable transfer identity derived from:
 - target transfer profile
 
 If the same transfer is retried, the operator should detect whether the target already has the verified tree.
+
+The current BodyPaint result now includes `transfer_identity.transfer_id`, derived from source host, target host, lane, profile, source tree hash, and target transfer profile. Automatic resume/skip is not implemented yet.
 
 ### H4: Resumable Transfer Capability
 

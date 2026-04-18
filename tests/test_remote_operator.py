@@ -261,6 +261,10 @@ class RemoteOperatorTests(unittest.TestCase):
             _Completed(returncode=0, stdout=json.dumps(tree_payload) + "\n"),
             _Completed(returncode=0, stdout="", stderr=""),
             _Completed(returncode=0, stdout="", stderr=""),
+            _Completed(returncode=0, stdout="", stderr=""),
+            _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/op_remote-handoff-bodypaint-view_abc123/trial-bodypaint-cassia"}) + "\n"),
+            _Completed(returncode=0, stdout=json.dumps({"staged_exists": True, "final_existed": False, "backup_path": "", "action": "promoted", "promoted": True}) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(verify_payload) + "\n"),
             _Completed(returncode=0, stdout=json.dumps(tree_payload | {"root": "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia"}) + "\n"),
         ]
@@ -277,8 +281,14 @@ class RemoteOperatorTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["transfer"]["target_export_root"], "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/trial-bodypaint-cassia")
+        self.assertEqual(
+            result["transfer"]["staging_operation_root"],
+            "C:/Projects/toy-yard/_exchange/consumer_packets/bodypaint/.incoming/" + result["operation_id"],
+        )
+        self.assertTrue(result["transfer"]["staged_tree_hash_match"])
         self.assertTrue(result["transfer"]["tree_hash_match"])
         self.assertTrue(all(result["verify_result"]["acceptance"].values()))
+        self.assertTrue(result["promote_result"]["payload"]["promoted"])
 
 
 if __name__ == "__main__":

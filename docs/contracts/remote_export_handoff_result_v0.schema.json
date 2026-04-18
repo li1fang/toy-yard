@@ -32,10 +32,15 @@
       "items": { "type": "string" }
     },
     "target_transfer_profile": { "type": "string" },
+    "transfer_identity": { "type": "object" },
     "export_result": { "type": "object" },
     "source_tree_manifest": { "type": "object" },
     "prepare_transport": { "type": ["object", "null"] },
+    "staging_prepare_transport": { "type": ["object", "null"] },
     "transfer": { "type": "object" },
+    "staged_verify_result": { "type": ["object", "null"] },
+    "staged_tree_manifest": { "type": ["object", "null"] },
+    "promote_result": { "type": ["object", "null"] },
     "verify_result": { "type": ["object", "null"] },
     "target_tree_manifest": { "type": ["object", "null"] },
     "failure_stage": { "type": "string" }

@@ -552,6 +552,41 @@ print(json.dumps(payload, ensure_ascii=True))
 """.strip()
 
 
+def _promote_directory_python_code(staged_root: str, final_root: str, operation_id: str) -> str:
+    return f"""
+import json, pathlib, shutil
+staged = pathlib.Path({staged_root!r})
+final = pathlib.Path({final_root!r})
+operation_id = {operation_id!r}
+payload = {{
+    'staged_root': str(staged),
+    'final_root': str(final),
+    'operation_id': operation_id,
+    'staged_exists': staged.exists(),
+    'final_existed': final.exists(),
+    'backup_path': '',
+    'action': '',
+    'promoted': False,
+}}
+if not staged.exists():
+    payload['action'] = 'missing_staged_root'
+else:
+    final.parent.mkdir(parents=True, exist_ok=True)
+    if final.exists():
+        previous_root = final.parent / '.previous'
+        previous_root.mkdir(parents=True, exist_ok=True)
+        backup = previous_root / f"{{final.name}}__{{operation_id}}"
+        if backup.exists():
+            shutil.rmtree(backup)
+        shutil.move(str(final), str(backup))
+        payload['backup_path'] = str(backup)
+    shutil.move(str(staged), str(final))
+    payload['action'] = 'promoted'
+    payload['promoted'] = final.exists()
+print(json.dumps(payload, ensure_ascii=True))
+""".strip()
+
+
 def _parse_last_json_stdout(transport: dict[str, Any]) -> dict[str, Any]:
     stdout = str(transport.get("stdout") or "").strip()
     if not stdout:
@@ -1196,6 +1231,23 @@ def remote_handoff_bodypaint_view(
     target_dir = str(target_transfer.get("remote_directory") or "").strip()
     if not target_dir:
         raise ValueError(f"Target transfer profile `{target_transfer_profile}` is missing remote_directory.")
+    profile_leaf = Path(export_root).name
+    target_export_root = _join_remote_path(target_profile, target_dir, profile_leaf)
+    staging_operation_root = _join_remote_path(target_profile, _join_remote_path(target_profile, target_dir, ".incoming"), operation_id)
+    target_staged_export_root = _join_remote_path(target_profile, staging_operation_root, profile_leaf)
+    transfer_identity_material = json.dumps(
+        {
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "lane": "bodypaint",
+            "profile": profile,
+            "source_tree_hash": source_tree_manifest.get("tree_hash") or "",
+            "target_transfer_profile": target_transfer_profile,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    transfer_id = "xfer_bodypaint_" + hashlib.sha256(transfer_identity_material.encode("utf-8")).hexdigest()[:12]
 
     prepare_transport: dict[str, Any] | None = None
     if bool(target_transfer.get("create_if_missing")):
@@ -1219,20 +1271,92 @@ def remote_handoff_bodypaint_view(
             }
             return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
 
-    profile_leaf = Path(export_root).name
-    target_export_root = _join_remote_path(target_profile, target_dir, profile_leaf)
+    staging_prepare_transport = _ensure_remote_directory(target_profile, staging_operation_root)
+    if staging_prepare_transport["returncode"] != 0:
+        payload = {
+            "schema_version": REMOTE_EXPORT_HANDOFF_RESULT_SCHEMA,
+            "operation_id": operation_id,
+            "operation_kind": "bodypaint_view_handoff",
+            "lane": "bodypaint",
+            "status": "fail",
+            "started_at": started_at,
+            "ended_at": now_iso(),
+            "source_host": source_host["profile_name"],
+            "target_host": target_host["profile_name"],
+            "profile": profile,
+            "export_result": export_result,
+            "target_transfer_profile": target_transfer_profile,
+            "source_tree_manifest": {
+                "transport": source_tree_transport,
+                "payload": source_tree_manifest,
+            },
+            "prepare_transport": prepare_transport,
+            "staging_prepare_transport": staging_prepare_transport,
+            "failure_stage": "target_staging_prepare",
+        }
+        return _finish_operator_run(conn, paths, operation_id=operation_id, status="fail", payload=payload)
+
     scp_command = _scp_command_from_source(
         source_profile=source_profile,
         target_profile=target_profile,
         source_path=export_root,
-        target_path=str(target_dir.rstrip("/\\")) + ("/" if "/" in target_dir or "\\" not in target_dir else "\\"),
+        target_path=str(staging_operation_root.rstrip("/\\")) + ("/" if "/" in staging_operation_root or "\\" not in staging_operation_root else "\\"),
         recursive=True,
     )
     transfer_transport = _run_subprocess(_ssh_argv(source_profile, scp_command), timeout=600)
 
+    staged_verify_result: dict[str, Any] | None = None
+    staged_tree_manifest_result: dict[str, Any] | None = None
+    promote_result: dict[str, Any] | None = None
     verify_result: dict[str, Any] | None = None
     target_tree_manifest_result: dict[str, Any] | None = None
     if transfer_transport["returncode"] == 0:
+        staged_verify_command = _remote_python_command(
+            target_profile,
+            python_code=_verify_bodypaint_export_python_code(target_staged_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        staged_verify_transport = _run_subprocess(_ssh_argv(target_profile, staged_verify_command), timeout=120)
+        staged_verify_payload: dict[str, Any] = _parse_last_json_stdout(staged_verify_transport) if staged_verify_transport["returncode"] == 0 else {}
+        staged_verify_result = {
+            "transport": staged_verify_transport,
+            "payload": staged_verify_payload,
+            "acceptance": dict(staged_verify_payload.get("acceptance") or {}),
+        }
+        staged_tree_command = _remote_python_command(
+            target_profile,
+            python_code=_directory_tree_manifest_python_code(target_staged_export_root),
+            project_root=str(target_host["project_root"]),
+        )
+        staged_tree_transport = _run_subprocess(_ssh_argv(target_profile, staged_tree_command), timeout=300)
+        staged_tree_payload = _parse_last_json_stdout(staged_tree_transport) if staged_tree_transport["returncode"] == 0 else {}
+        staged_tree_manifest_result = {
+            "transport": staged_tree_transport,
+            "payload": staged_tree_payload,
+        }
+
+    source_tree_hash = str(source_tree_manifest.get("tree_hash") or "")
+    staged_tree_hash = ""
+    if staged_tree_manifest_result:
+        staged_tree_hash = str(staged_tree_manifest_result.get("payload", {}).get("tree_hash") or "")
+    staged_tree_hash_match = bool(source_tree_hash and staged_tree_hash and source_tree_hash == staged_tree_hash)
+    staged_acceptance_ok = bool(staged_verify_result and all(bool(value) for value in staged_verify_result.get("acceptance", {}).values()))
+
+    if transfer_transport["returncode"] == 0 and staged_acceptance_ok and staged_tree_hash_match:
+        promote_command = _remote_python_command(
+            target_profile,
+            python_code=_promote_directory_python_code(target_staged_export_root, target_export_root, operation_id),
+            project_root=str(target_host["project_root"]),
+        )
+        promote_transport = _run_subprocess(_ssh_argv(target_profile, promote_command), timeout=300)
+        promote_payload = _parse_last_json_stdout(promote_transport) if promote_transport["returncode"] == 0 else {}
+        promote_result = {
+            "transport": promote_transport,
+            "payload": promote_payload,
+        }
+
+    promoted = bool(promote_result and promote_result.get("payload", {}).get("promoted"))
+    if promoted:
         verify_command = _remote_python_command(
             target_profile,
             python_code=_verify_bodypaint_export_python_code(target_export_root),
@@ -1257,7 +1381,6 @@ def remote_handoff_bodypaint_view(
             "payload": tree_payload,
         }
 
-    source_tree_hash = str(source_tree_manifest.get("tree_hash") or "")
     target_tree_hash = ""
     if target_tree_manifest_result:
         target_tree_hash = str(target_tree_manifest_result.get("payload", {}).get("tree_hash") or "")
@@ -1268,6 +1391,15 @@ def remote_handoff_bodypaint_view(
     if transfer_transport["returncode"] != 0:
         status = "fail"
         failure_stage = "transfer"
+    elif not staged_verify_result or not all(bool(value) for value in staged_verify_result.get("acceptance", {}).values()):
+        status = "fail"
+        failure_stage = "staging_verify"
+    elif not staged_tree_hash_match:
+        status = "fail"
+        failure_stage = "staging_hash_verify"
+    elif not promote_result or promote_result.get("transport", {}).get("returncode") != 0 or not promoted:
+        status = "fail"
+        failure_stage = "target_promote"
     elif not verify_result or not all(bool(value) for value in verify_result.get("acceptance", {}).values()):
         status = "fail"
         failure_stage = "target_verify"
@@ -1290,6 +1422,10 @@ def remote_handoff_bodypaint_view(
         "package_refs": package_refs,
         "aiue_pmx_profile": aiue_pmx_profile or "",
         "target_transfer_profile": target_transfer_profile,
+        "transfer_identity": {
+            "transfer_id": transfer_id,
+            "identity_material": json.loads(transfer_identity_material),
+        },
         "export_result": export_result,
         "source_export_root": export_root,
         "source_tree_manifest": {
@@ -1297,13 +1433,21 @@ def remote_handoff_bodypaint_view(
             "payload": source_tree_manifest,
         },
         "prepare_transport": prepare_transport,
+        "staging_prepare_transport": staging_prepare_transport,
         "transfer": {
             "command_transport": transfer_transport,
             "target_export_root": target_export_root,
+            "target_staging_root": target_staged_export_root,
+            "staging_operation_root": staging_operation_root,
+            "staged_tree_hash_match": staged_tree_hash_match,
+            "staged_tree_hash": staged_tree_hash,
             "tree_hash_match": tree_hash_match,
             "source_tree_hash": source_tree_hash,
             "target_tree_hash": target_tree_hash,
         },
+        "staged_verify_result": staged_verify_result,
+        "staged_tree_manifest": staged_tree_manifest_result,
+        "promote_result": promote_result,
         "verify_result": verify_result,
         "target_tree_manifest": target_tree_manifest_result,
         "failure_stage": failure_stage,

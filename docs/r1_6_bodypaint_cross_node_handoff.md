@@ -47,6 +47,13 @@ Those are lane/content signals, not Remote Operator transport failures. This che
 
 After this checkpoint, directory-style handoff integrity was upgraded to record source and target tree manifests and require matching tree hashes.
 
+The next hardening step adds atomic target staging:
+
+- transfer first lands under `.incoming/<operation_id>/<profile>/`
+- staged shape and tree hash are verified before promotion
+- the final consumer-visible directory is updated only after staged verification passes
+- an existing final directory is moved aside under `.previous/<operation_id>`
+
 ## Hashcheck Re-Run
 
 After adding tree hash verification, the same Windows-to-Linux lane was re-run with:
