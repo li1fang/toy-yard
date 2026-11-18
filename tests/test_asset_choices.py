@@ -7,6 +7,7 @@ from toyyard.asset_choices import (
     answer_membership, ask_membership, current_choice, init_choices, membership_questions, record_decision, related,
 )
 from toyyard.db import init_db
+from toyyard.deliveries import init_deliveries, publish_delivery, resolve_delivery
 from toyyard.warehouse import ensure_package, ensure_sample
 
 
@@ -44,3 +45,24 @@ class AssetChoicesTest(unittest.TestCase):
         answer_membership(self.db, question, None, "reviewer", "Standalone reference")
         self.assertEqual([], related(self.db, child))
         self.assertEqual([], membership_questions(self.db, open_only=True))
+
+    def test_producer_releases_respect_adoption_and_interface_updates(self):
+        init_deliveries(self.db)
+        release = dict(purpose="demo", consumer="player", publisher="artist",
+                       published_on="2026-11-19", packet_sha256="a" * 64)
+        old, new, breaking = (self.parts[key] for key in ("old", "new", "unknown-part"))
+        self.assertIsNone(resolve_delivery(self.db, "demo", "player", "demo.v1", "old"))
+        publish_delivery(self.db, old, interface="demo.v1", **release)
+        self.assertIsNone(resolve_delivery(self.db, "demo", "player", "demo.v1"))
+        self.assertIsNone(resolve_delivery(self.db, "demo", "other-player", "demo.v1", "old"))
+        record_decision(self.db, old, "demo", "adopt", "reviewer")
+        publish_delivery(self.db, new, interface="demo.v1", supersedes="old", compatibility="compatible", **release)
+        publish_delivery(self.db, breaking, interface="demo.v2", supersedes="new", compatibility="breaking", **release)
+        self.assertEqual("new", resolve_delivery(self.db, "demo", "player", "demo.v1")["canonical_package_id"])
+        self.assertEqual("old", resolve_delivery(self.db, "demo", "player", "demo.v1", "old")["canonical_package_id"])
+        self.assertIsNone(resolve_delivery(self.db, "demo", "player", "demo.v2"))
+        record_decision(self.db, breaking, "demo", "adopt", "reviewer")
+        self.assertIsNone(resolve_delivery(self.db, "demo", "player", "demo.v1"))
+        self.assertEqual("unknown-part", resolve_delivery(self.db, "demo", "player", "demo.v2")["canonical_package_id"])
+        with self.assertRaises(ValueError):
+            publish_delivery(self.db, old, interface="demo.v1", **(release | {"packet_sha256": "b" * 64}))

@@ -139,6 +139,14 @@ toyyard review current <purpose>
 
 The review functions are available in `toyyard.asset_choices` for projects that provide their own comparison UI and authenticated review entry.
 
+### Producer deliveries
+
+Projects can use `toyyard.deliveries` from their existing intake and build tools. After initializing the warehouse, call `init_choices(db)` and `init_deliveries(db)`. The intake owner calls `publish_delivery` for a warehouse package with a purpose, consumer, interface ID, publisher, publication date, and ZIP SHA-256. Usage instructions, events, and dependency versions travel in the consumer packet. Treat the publisher field as attribution from a trusted intake path. The project supplies authentication and controls who can publish.
+
+`resolve_delivery(db, purpose, consumer, interface, version=None)` returns a published delivery for an adopted purpose. Pass a canonical version to reproduce a specific released package or run a scoped trial before adoption. Store that version and the digest with the resulting build. The caller verifies the downloaded ZIP against the release digest.
+
+A producer issues changes under a new package version. For a compatible update, supply `supersedes=<prior version>` and `compatibility="compatible"` with the same interface ID. Automatic resolution follows that replacement, and pinned builds retain their previous version. A breaking update has a new interface ID and `compatibility="breaking"`. It becomes the automatic result after a reviewer adopts it and the downstream caller requests the new interface.
+
 ### PMX Lane
 
 - `T1.6 Durable Roundtrip Confirmation`: passed
