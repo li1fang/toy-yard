@@ -10,6 +10,7 @@ from toyyard.aiue_export import export_aiue_pmx_view
 from toyyard.communication_signal import build_aiue_pmx_export_signal_from_paths, build_motion_catalog_signal
 from toyyard.constants import DEFAULT_ROOT, ROOT_KINDS, SOURCE_KINDS
 from toyyard.db import connect, init_db
+from toyyard.review_cli import add_review_commands, run_review
 from toyyard.ingest import format_import_rows, import_path, scan_source
 from toyyard.legacy_3dgirls import import_legacy_3dgirls
 from toyyard.motion_handoff import import_motion_handoff
@@ -70,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("init", help="Create folder skeleton, SQLite DB, and default rule files")
+    add_review_commands(subparsers)
 
     ingest_parser = subparsers.add_parser("ingest", help="Import or scan source packages")
     ingest_subparsers = ingest_parser.add_subparsers(dest="ingest_command", required=True)
@@ -408,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         return cmd_init(paths)
+    if args.command == "review":
+        return run_review(paths.db_path, args)
     if args.command == "ingest" and args.ingest_command == "import":
         return cmd_ingest_import(paths, args)
     if args.command == "ingest" and args.ingest_command == "scan":

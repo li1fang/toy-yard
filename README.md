@@ -125,6 +125,20 @@ toyyard inspect source <source_id>
 
 ## Status
 
+### Package review
+
+Ask for a component's parent when it cannot be established at intake. The question lists possible package versions while the relationship stays pending. A confirmed parent adds an `includes` edge. Use `-` in place of a parent and give a note to record that the component is standalone. Use `choose` to select a single current package for a named downstream purpose. Review history is independent of creating a new candidate version.
+
+```text
+toyyard review ask <component-version> "Which mount uses this part?" --slot mount --candidate <parent-version> --actor artist
+toyyard review questions --open
+toyyard review answer <question-id> <parent-version> --actor reviewer
+toyyard review choose <purpose> <package-version> --actor reviewer
+toyyard review current <purpose>
+```
+
+The review functions are available in `toyyard.asset_choices` for projects that provide their own comparison UI and authenticated review entry.
+
 ### PMX Lane
 
 - `T1.6 Durable Roundtrip Confirmation`: passed
